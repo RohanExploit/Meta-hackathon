@@ -105,10 +105,11 @@ def _build_current_episode_summary() -> Dict[str, Any]:
 async def reset_environment(request: ResetRequest):
     """Reset the environment with the given task configuration."""
     try:
-        if request.seed is not None:
-            env.seed = request.seed
-
         task_config = _resolve_task_config(request)
+        if request.seed is not None:
+            env.seed = int(request.seed)
+        elif "seed" in task_config:
+            env.seed = int(task_config["seed"])
         observation = env.reset(task_config)
 
         return {

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+retail_inventory_env.egg-info/
+.mypy_cache/
+.ruff_cache/

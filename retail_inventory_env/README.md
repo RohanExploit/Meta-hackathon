@@ -75,18 +75,36 @@ The environment includes three progressively challenging tasks:
 
 ## Grading
 
-Performance is scored using normalized profit:
+Performance is scored using a deterministic multi-factor grader:
 
 ```
-Score = min(max(Profit / TargetProfit, 0.0), 1.0)
+score = (
+  0.5 * profit_score +
+  0.3 * fill_rate_score +
+  0.2 * efficiency_score
+)
+
+if fill_rate < 0.6:
+  score *= 0.5
 ```
 
 Where:
-- Profit = final_cash + inventory_value - initial_cash
-- TargetProfit = precomputed optimal profit for the task
-- Score ranges from 0.0 (loss) to 1.0 (meeting/exceeding target)
+- `profit_score = clamp(profit / baseline_profit, 0, 1)`
+- `fill_rate = total_sales / total_demand` (safe default when demand is zero)
+- `efficiency = 1 - (holding_cost / max_possible_holding_cost)`
+- Final score is always clamped to `[0.0, 1.0]`
 
 This provides continuous, non-binary evaluation that rewards partial progress.
+
+## Built-in Tasks
+
+The environment ships with deterministic tasks:
+
+- `easy`: seed `42`, 1 product, horizon `7`, stable demand
+- `medium`: seed `123`, 2 products, horizon `14`, stochastic demand
+- `hard`: seed `999`, 3 products, horizon `30`, trend + noise
+
+You can reset using task name directly via API (`task_name`: `easy|medium|hard`).
 
 ## Setup and Usage
 
@@ -148,6 +166,12 @@ This provides continuous, non-binary evaluation that rewards partial progress.
    ```bash
    python inference.py
    ```
+
+`inference.py` runs all built-in tasks (`easy`, `medium`, `hard`) in sequence:
+- calls `/reset`
+- loops on `/step` until done
+- uses OpenAI client with `temperature=0`
+- outputs per-task and mean deterministic score
 
 ### Docker Deployment
 

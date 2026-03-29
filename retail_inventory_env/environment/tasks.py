@@ -3,18 +3,17 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
-TASK_PRESETS: Dict[str, Dict[str, Any]] = {
-    "easy_single_product": {
-        "name": "easy_single_product",
+TASKS: Dict[str, Dict[str, Any]] = {
+    "easy": {
+        "name": "easy",
+        "seed": 42,
         "horizon": 7,
         "products": ["Widget"],
         "initial_inventory": {"Widget": 10},
         "initial_cash": 120.0,
-        "fixed_demand": {"Widget": 2.8},
+        "fixed_demand": {"Widget": 2.5},
         "demand_elasticity": {"Widget": 1.0},
-        "seasonality": {
-            "Widget": [1.0, 1.05, 0.95, 1.0, 1.1, 0.9, 1.0],
-        },
+        "seasonality": {"Widget": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]},
         "product_costs": {"Widget": 5.0},
         "holding_costs": {"Widget": 0.08},
         "max_inventory": {"Widget": 120},
@@ -29,15 +28,16 @@ TASK_PRESETS: Dict[str, Dict[str, Any]] = {
         "invalid_action_penalty": 4.0,
         "loop_penalty": 2.5,
         "service_penalty": 0.8,
-        "grading_seeds": [11, 23, 37, 41, 53],
+        "grading_seeds": [42],
     },
-    "medium_two_product_variable_demand": {
-        "name": "medium_two_product_variable_demand",
+    "medium": {
+        "name": "medium",
+        "seed": 123,
         "horizon": 14,
         "products": ["Stapler", "Notebook"],
         "initial_inventory": {"Stapler": 6, "Notebook": 10},
         "initial_cash": 240.0,
-        "fixed_demand": {"Stapler": 2.4, "Notebook": 3.2},
+        "demand_ranges": {"Stapler": [1.8, 3.0], "Notebook": [2.4, 3.8]},
         "demand_elasticity": {"Stapler": 0.9, "Notebook": 1.2},
         "seasonality": {
             "Stapler": [1.0, 1.1, 1.0, 0.95, 1.0, 1.05, 1.0, 0.9, 1.0, 1.15, 1.0, 0.95, 1.0, 1.05],
@@ -60,15 +60,16 @@ TASK_PRESETS: Dict[str, Dict[str, Any]] = {
         "invalid_action_penalty": 6.0,
         "loop_penalty": 3.0,
         "service_penalty": 1.2,
-        "grading_seeds": [7, 13, 29, 43, 67],
+        "grading_seeds": [123],
     },
-    "hard_multi_product_nonstationary": {
-        "name": "hard_multi_product_nonstationary",
+    "hard": {
+        "name": "hard",
+        "seed": 999,
         "horizon": 30,
         "products": ["Cable", "Mouse", "Keyboard"],
         "initial_inventory": {"Cable": 8, "Mouse": 6, "Keyboard": 4},
         "initial_cash": 360.0,
-        "fixed_demand": {"Cable": 4.2, "Mouse": 2.3, "Keyboard": 1.6},
+        "demand_ranges": {"Cable": [3.2, 4.8], "Mouse": [1.9, 2.8], "Keyboard": [1.3, 2.0]},
         "demand_elasticity": {"Cable": 1.4, "Mouse": 1.1, "Keyboard": 0.8},
         "seasonality": {
             "Cable": [0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.15, 1.05, 1.0, 0.95, 0.9, 0.88, 0.92, 1.0, 1.08, 1.15, 1.2, 1.25, 1.3, 1.22, 1.12, 1.0, 0.95, 0.9, 0.88, 0.9, 0.95, 1.0],
@@ -93,8 +94,16 @@ TASK_PRESETS: Dict[str, Dict[str, Any]] = {
         "invalid_action_penalty": 8.0,
         "loop_penalty": 4.0,
         "service_penalty": 1.5,
-        "grading_seeds": [3, 17, 31, 47, 71],
+        "grading_seeds": [999],
     },
+}
+
+# Backward-compatible aliases
+TASK_PRESETS: Dict[str, Dict[str, Any]] = {
+    **TASKS,
+    "easy_single_product": TASKS["easy"],
+    "medium_two_product_variable_demand": TASKS["medium"],
+    "hard_multi_product_nonstationary": TASKS["hard"],
 }
 
 
