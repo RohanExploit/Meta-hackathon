@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RITM Bloomberg Deck</title>
+  <style>
+    :root {
+      --bg0: #060a0f;
+      --bg1: #0b121b;
+      --bg2: #101a25;
+      --line: #1b2a3a;
+      --line2: #24384d;
+      --txt: #cfdae5;
+      --muted: #8ca3b8;
+      --cyan: #54c8ff;
+      --amber: #ffca6b;
+      --good: #31d995;
+      --warn: #f0b13f;
+      --bad: #ff6171;
+      --mono: "IBM Plex Mono", "JetBrains Mono", "Consolas", monospace;
+      --sans: "Sora", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--txt);
+      background:
+        radial-gradient(1200px 420px at 70% -20%, #16304b 0%, transparent 60%),
+        radial-gradient(1000px 360px at 20% -35%, #193229 0%, transparent 55%),
+        var(--bg0);
+      min-height: 100%;
+    }
+    body { font-family: var(--sans); }
+
+    .pulse {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .55; }
+    }
+
+    .top {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #0d1823 0%, #091119 100%);
+      backdrop-filter: blur(6px);
+    }
+    .brand {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+    .brand h1 {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--cyan);
+      letter-spacing: .03em;
+    }
+    .brand .sub {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .03em;
+    }
+
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0a131d;
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 7px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 10px currentColor;
+      display: inline-block;
+    }
+    .dot.ok { background: var(--good); }
+    .dot.bad { background: var(--bad); }
+
+    .btns { display: flex; gap: 8px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr 380px;
+      grid-template-rows: auto auto;
+      grid-template-areas:
+        "control blotter feed"
+        "risk    blotter feed";
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, var(--bg2) 0%, var(--bg1) 100%);
+      overflow: hidden;
+      animation: reveal .35s ease;
+    }
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .control { grid-area: control; }
+    .risk { grid-area: risk; }
+    .blotter { grid-area: blotter; }
+    .feed { grid-area: feed; }
+
+    .head {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--amber);
+      letter-spacing: .04em;
+      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .body { padding: 12px; }
+    .tiny { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    input, select, button {
+      width: 100%;
+      background: linear-gradient(180deg, #142132 0%, #0f1825 100%);
+      border: 1px solid #24374b;
+      border-radius: 6px;
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 8px 10px;
+      outline: none;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: #35526f; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0a121b;
+      padding: 8px;
+    }
+    .kpi .l { color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .kpi .v { color: var(--txt); font-family: var(--mono); font-size: 16px; margin-top: 3px; }
+
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .chart {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #08111a;
+      padding: 8px;
+    }
+    .chart h3 {
+      margin: 0 0 6px;
+      font-family: var(--mono);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    canvas { width: 100%; height: 110px; display: block; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid #1a2735;
+      padding: 7px 6px;
+    }
+    th { color: var(--muted); font-weight: 600; }
+
+    .alertbar {
+      border: 1px solid #4a2f12;
+      background: linear-gradient(90deg, #2d1609 0%, #2a1308 100%);
+      color: #ffd9a3;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: var(--mono);
+      font-size: 12px;
+      margin-bottom: 8px;
+      display: none;
+    }
+    .alertbar.show { display: block; animation: reveal .2s ease; }
+
+    .feedlog {
+      height: 620px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      background: #081018;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.42;
+      padding: 10px;
+    }
+    .line {
+      border-bottom: 1px dotted #152131;
+      padding: 3px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .line .t { color: var(--muted); margin-right: 8px; }
+    .line .ok { color: var(--good); }
+    .line .warn { color: var(--warn); }
+    .line .bad { color: var(--bad); }
+    .line .act { color: var(--cyan); }
+
+    .cmd {
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 10px;
+      background: #0a131d;
+    }
+    .cmd input {
+      border-color: #35506b;
+      background: #0a1621;
+    }
+
+    .hotkeys {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .chip {
+      border: 1px solid var(--line2);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      background: #0b1520;
+    }
+
+    @media (max-width: 1280px) {
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "control"
+          "risk"
+          "blotter"
+          "feed";
+      }
+      .feedlog { height: 360px; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">
+      <h1>RITM // BLOOMBERG-STYLE OPS TERMINAL</h1>
+      <span class="sub">Real-time Inventory Trading Desk</span>
+    </div>
+    <div class="status"><span id="apiDot" class="dot pulse"></span><span id="apiStatus">API: checking</span></div>
+    <div class="btns">
+      <button id="pingBtn">Ping</button>
+      <button id="resetBtn">Reset</button>
+      <button id="stepBtn">Step</button>
+      <button id="auto1Btn">Auto x1</button>
+      <button id="autorunBtn">Run Till End</button>
+    </div>
+  </div>
+
+  <main class="layout">
+    <section class="panel control">
+      <div class="head">ORDER PAD <span class="tiny">manual + automated execution</span></div>
+      <div class="body">
+        <label class="tiny">Task</label>
+        <select id="taskSelect">
+          <option value="easy">easy</option>
+          <option value="medium">medium</option>
+          <option value="hard">hard</option>
+        </select>
+
+        <div class="row2" style="margin-top:8px">
+          <div>
+            <label class="tiny">Seed Override</label>
+            <input id="seedInput" type="number" placeholder="optional">
+          </div>
+          <div>
+            <label class="tiny">Action</label>
+            <select id="actionType">
+              <option value="noop">noop</option>
+              <option value="order">order</option>
+              <option value="set_price">set_price</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row2" style="margin-top:8px">
+          <div>
+            <label class="tiny">Product</label>
+            <input id="productInput" type="text" placeholder="Widget">
+          </div>
+          <div>
+            <label class="tiny">Value (qty/price)</label>
+            <input id="valueInput" type="text" placeholder="2 or 9.8">
+          </div>
+        </div>
+
+        <div class="hotkeys">
+          <span class="chip">/reset [task] [seed]</span>
+          <span class="chip">/step order Widget 2</span>
+          <span class="chip">/step set_price Widget 9.5</span>
+          <span class="chip">/run</span>
+          <span class="chip">/ping</span>
+          <span class="chip">Ctrl+K focus command</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel risk">
+      <div class="head">RISK PANEL <span class="tiny">alerts + score posture</span></div>
+      <div class="body">
+        <div id="alertBar" class="alertbar"></div>
+        <div class="kpis">
+          <div class="kpi"><div class="l">DAY</div><div id="kDay" class="v">-</div></div>
+          <div class="kpi"><div class="l">CASH</div><div id="kCash" class="v">-</div></div>
+          <div class="kpi"><div class="l">LAST REWARD</div><div id="kReward" class="v">-</div></div>
+          <div class="kpi"><div class="l">FILL RATE</div><div id="kFill" class="v">-</div></div>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><div class="l">SCORE</div><div id="kScore" class="v">-</div></div>
+          <div class="kpi"><div class="l">PROFIT SCORE</div><div id="kProfit" class="v">-</div></div>
+          <div class="kpi"><div class="l">EFFICIENCY</div><div id="kEff" class="v">-</div></div>
+          <div class="kpi"><div class="l">DONE</div><div id="kDone" class="v">-</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel blotter">
+      <div class="head">BLOTTER + TELEMETRY <span class="tiny">live pricing and execution traces</span></div>
+      <div class="body">
+        <div class="charts">
+          <div class="chart">
+            <h3>CASH CURVE</h3>
+            <canvas id="cashChart" width="520" height="120"></canvas>
+          </div>
+          <div class="chart">
+            <h3>REWARD CURVE</h3>
+            <canvas id="rewardChart" width="520" height="120"></canvas>
+          </div>
+          <div class="chart">
+            <h3>FILL RATE CURVE</h3>
+            <canvas id="fillChart" width="520" height="120"></canvas>
+          </div>
+          <div class="chart">
+            <h3>SCORE CURVE</h3>
+            <canvas id="scoreChart" width="520" height="120"></canvas>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Inventory</th>
+              <th>Price</th>
+              <th>Last Sales</th>
+              <th>Implied PnL/day</th>
+            </tr>
+          </thead>
+          <tbody id="invBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel feed">
+      <div class="head">EXECUTION FEED <span class="tiny">event stream + command palette</span></div>
+      <div id="feedLog" class="feedlog"></div>
+      <div class="cmd">
+        <input id="cmdInput" type="text" placeholder="Type /reset easy 42, /step order Widget 2, /run, /ping">
+        <button id="cmdBtn">Exec</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      observation: null,
+      done: false,
+      reward: 0,
+      running: false,
+      history: {
+        cash: [],
+        reward: [],
+        fill: [],
+        score: [],
+      },
+      latestInfo: {},
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const feed = $("feedLog");
+
+    function tstamp() {
+      return new Date().toLocaleTimeString();
+    }
+
+    function line(msg, cls = "") {
+      const d = document.createElement("div");
+      d.className = "line";
+      d.innerHTML = `<span class="t">${tstamp()}</span><span class="${cls}">${msg}</span>`;
+      feed.prepend(d);
+    }
+
+    function apiStatus(ok, msg) {
+      const dot = $("apiDot");
+      dot.classList.remove("ok", "bad", "pulse");
+      dot.classList.add(ok ? "ok" : "bad");
+      $("apiStatus").textContent = msg;
+    }
+
+    async function api(path, method = "GET", body = null) {
+      const res = await fetch(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : null,
+      });
+      if (!res.ok) {
+        const tx = await res.text();
+        throw new Error(tx || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function addSeriesPoint(name, value) {
+      const arr = state.history[name];
+      arr.push(Number.isFinite(value) ? value : 0);
+      if (arr.length > 120) arr.shift();
+    }
+
+    function drawSpark(canvasId, points, color, fill = false) {
+      const canvas = $(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = "#173044";
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 4; i += 1) {
+        const y = (h / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      if (!points.length) return;
+      const min = Math.min(...points);
+      const max = Math.max(...points);
+      const span = Math.max(1e-6, max - min);
+      const step = points.length > 1 ? w / (points.length - 1) : w;
+
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const x = i * step;
+        const y = h - ((p - min) / span) * (h - 8) - 4;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      if (fill) {
+        ctx.lineTo(w, h - 2);
+        ctx.lineTo(0, h - 2);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, 0, 0, h);
+        grad.addColorStop(0, color + "44");
+        grad.addColorStop(1, color + "00");
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+    }
+
+    function refreshCharts() {
+      drawSpark("cashChart", state.history.cash, "#54c8ff", true);
+      drawSpark("rewardChart", state.history.reward, "#31d995", true);
+      drawSpark("fillChart", state.history.fill, "#ffca6b", true);
+      drawSpark("scoreChart", state.history.score, "#ff6171", true);
+    }
+
+    function setKpi(id, val) {
+      $(id).textContent = val;
+    }
+
+    function riskAlert(info) {
+      const bar = $("alertBar");
+      let msg = "";
+      if (info?.invalid_action) msg = "ALERT: Invalid action detected; penalty applied.";
+      if (info?.loop_detected) msg = "ALERT: Looping behavior detected; execution penalty active.";
+      const fr = info?.grader?.fill_rate;
+      if (typeof fr === "number" && fr < 0.6) msg = "ALERT: Fill rate below 0.60, anti-gaming score haircut active.";
+
+      if (msg) {
+        bar.textContent = msg;
+        bar.classList.add("show");
+      } else {
+        bar.classList.remove("show");
+      }
+    }
+
+    function updateTable() {
+      const o = state.observation;
+      const body = $("invBody");
+      body.innerHTML = "";
+      if (!o) return;
+      Object.keys(o.inventory).forEach((p) => {
+        const inv = Number(o.inventory[p] ?? 0);
+        const price = Number(o.price?.[p] ?? 0);
+        const sales = Number(o.sales_history?.[p] ?? 0);
+        const pnl = (sales * price).toFixed(2);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${p}</td><td>${inv}</td><td>${price.toFixed(2)}</td><td>${sales}</td><td>${pnl}</td>`;
+        body.appendChild(tr);
+      });
+    }
+
+    function renderInfo(info = {}) {
+      state.latestInfo = info || {};
+      const o = state.observation;
+      if (!o) return;
+
+      setKpi("kDay", String(o.day));
+      setKpi("kCash", Number(o.cash).toFixed(2));
+      setKpi("kReward", Number(state.reward).toFixed(3));
+      setKpi("kDone", state.done ? "YES" : "NO");
+
+      const grader = info?.grader || {};
+      const fillRate = typeof grader.fill_rate === "number" ? grader.fill_rate : null;
+      const score = typeof grader.score === "number" ? grader.score : null;
+      const pScore = typeof grader.profit_score === "number" ? grader.profit_score : null;
+      const eScore = typeof grader.efficiency_score === "number" ? grader.efficiency_score : null;
+
+      setKpi("kFill", fillRate == null ? "-" : fillRate.toFixed(3));
+      setKpi("kScore", score == null ? "-" : score.toFixed(3));
+      setKpi("kProfit", pScore == null ? "-" : pScore.toFixed(3));
+      setKpi("kEff", eScore == null ? "-" : eScore.toFixed(3));
+
+      addSeriesPoint("cash", Number(o.cash));
+      addSeriesPoint("reward", Number(state.reward));
+      addSeriesPoint("fill", fillRate == null ? 0 : fillRate);
+      addSeriesPoint("score", score == null ? 0 : score);
+      refreshCharts();
+      updateTable();
+      riskAlert(info);
+    }
+
+    function manualAction() {
+      const action = $("actionType").value;
+      const product = $("productInput").value.trim();
+      const raw = $("valueInput").value.trim();
+
+      if (action === "order") return { action: "order", product, quantity: Number.parseInt(raw || "0", 10) };
+      if (action === "set_price") return { action: "set_price", product, new_price: Number.parseFloat(raw || "0") };
+      return { action: "noop" };
+    }
+
+    function autoAction() {
+      const o = state.observation;
+      if (!o) return { action: "noop" };
+      const products = Object.keys(o.inventory || {});
+      if (!products.length) return { action: "noop" };
+
+      let p = products[0];
+      let min = Number.POSITIVE_INFINITY;
+      products.forEach((k) => {
+        const v = Number(o.inventory[k] ?? 0);
+        if (v < min) { min = v; p = k; }
+      });
+
+      const s = Number(o.sales_history?.[p] ?? 0);
+      if (min <= Math.max(2, s)) {
+        return { action: "order", product: p, quantity: Math.max(2, s + 1) };
+      }
+      return { action: "noop" };
+    }
+
+    async function doReset(taskName = null, seed = null) {
+      const payload = { task_name: taskName || $("taskSelect").value };
+      const seedRaw = seed ?? $("seedInput").value.trim();
+      if (seedRaw !== "" && seedRaw !== null && seedRaw !== undefined) payload.seed = Number(seedRaw);
+
+      const out = await api("/reset", "POST", payload);
+      state.observation = out.observation;
+      state.done = !!out.done;
+      state.reward = Number(out.reward || 0);
+      state.history = { cash: [], reward: [], fill: [], score: [] };
+      renderInfo(out.info || {});
+      line(`RESET task=${payload.task_name} done=${state.done}`, "ok");
+    }
+
+    async function doStep(action) {
+      const out = await api("/step", "POST", { action });
+      state.observation = out.observation;
+      state.done = !!out.done;
+      state.reward = Number(out.reward || 0);
+      renderInfo(out.info || {});
+
+      const invalid = !!out.info?.invalid_action;
+      line(`STEP ${JSON.stringify(action)} reward=${state.reward.toFixed(3)} done=${state.done}`, invalid ? "warn" : "act");
+
+      if (state.done && out.info?.grader?.score !== undefined) {
+        line(`FINAL SCORE ${Number(out.info.grader.score).toFixed(4)}`, "ok");
+      }
+    }
+
+    async function doAutoRun() {
+      if (!state.observation || state.done || state.running) return;
+      state.running = true;
+      $("autorunBtn").disabled = true;
+      try {
+        let g = 0;
+        while (!state.done && g < 250) {
+          await doStep(autoAction());
+          g += 1;
+          await new Promise((r) => setTimeout(r, 120));
+        }
+      } finally {
+        state.running = false;
+        $("autorunBtn").disabled = false;
+      }
+    }
+
+    async function doPing() {
+      try {
+        const h = await api("/health");
+        if (h.status === "healthy") {
+          apiStatus(true, "API: healthy");
+          line("HEALTHCHECK OK", "ok");
+        } else {
+          apiStatus(false, "API: unhealthy");
+          line("HEALTHCHECK FAILED", "bad");
+        }
+      } catch (e) {
+        apiStatus(false, "API: unreachable");
+        line(`HEALTHCHECK ERROR ${e.message}`, "bad");
+      }
+    }
+
+    async function executeCommand(raw) {
+      const cmd = (raw || "").trim();
+      if (!cmd) return;
+      const parts = cmd.split(/\s+/);
+      const op = parts[0].toLowerCase();
+
+      try {
+        if (op === "/ping") {
+          await doPing();
+          return;
+        }
+        if (op === "/reset") {
+          const t = parts[1] || "easy";
+          const s = parts.length > 2 ? parts[2] : null;
+          await doReset(t, s);
+          return;
+        }
+        if (op === "/run") {
+          await doAutoRun();
+          return;
+        }
+        if (op === "/step") {
+          if (parts.length < 2) {
+            line("CMD ERR: usage /step noop|order|set_price ...", "bad");
+            return;
+          }
+          const kind = parts[1];
+          if (kind === "noop") {
+            await doStep({ action: "noop" });
+            return;
+          }
+          if (kind === "order") {
+            if (parts.length < 4) {
+              line("CMD ERR: /step order <product> <qty>", "bad");
+              return;
+            }
+            await doStep({ action: "order", product: parts[2], quantity: Number(parts[3]) });
+            return;
+          }
+          if (kind === "set_price") {
+            if (parts.length < 4) {
+              line("CMD ERR: /step set_price <product> <price>", "bad");
+              return;
+            }
+            await doStep({ action: "set_price", product: parts[2], new_price: Number(parts[3]) });
+            return;
+          }
+          line("CMD ERR: unknown step action", "bad");
+          return;
+        }
+
+        line(`CMD ERR: unknown command ${op}`, "bad");
+      } catch (e) {
+        line(`CMD EXEC FAILED ${e.message}`, "bad");
+      }
+    }
+
+    $("pingBtn").addEventListener("click", () => doPing());
+    $("resetBtn").addEventListener("click", async () => {
+      try { await doReset(); } catch (e) { line(`RESET FAILED ${e.message}`, "bad"); }
+    });
+    $("stepBtn").addEventListener("click", async () => {
+      if (!state.observation || state.done) return;
+      try { await doStep(manualAction()); } catch (e) { line(`STEP FAILED ${e.message}`, "bad"); }
+    });
+    $("auto1Btn").addEventListener("click", async () => {
+      if (!state.observation || state.done) return;
+      try { await doStep(autoAction()); } catch (e) { line(`AUTO STEP FAILED ${e.message}`, "bad"); }
+    });
+    $("autorunBtn").addEventListener("click", async () => {
+      try { await doAutoRun(); } catch (e) { line(`RUN FAILED ${e.message}`, "bad"); }
+    });
+
+    $("cmdBtn").addEventListener("click", async () => {
+      const input = $("cmdInput");
+      const raw = input.value;
+      input.value = "";
+      await executeCommand(raw);
+    });
+    $("cmdInput").addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        const input = $("cmdInput");
+        const raw = input.value;
+        input.value = "";
+        await executeCommand(raw);
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        $("cmdInput").focus();
+      }
+    });
+
+    (async () => {
+      await doPing();
+      try {
+        const t = await api("/tasks");
+        const sel = $("taskSelect");
+        const canonical = ["easy", "medium", "hard"];
+        sel.innerHTML = "";
+        canonical.forEach((name) => {
+          const op = document.createElement("option");
+          op.value = name;
+          op.textContent = name;
+          sel.appendChild(op);
+        });
+        line(`TASKS READY count=${t.tasks?.length ?? 0}`, "ok");
+      } catch (e) {
+        line(`TASK LOAD ERROR ${e.message}`, "warn");
+      }
+    })();
+  </script>
+</body>
+</html>
