@@ -1,14 +1,33 @@
-name: "RetailInventoryEnv"
-description: "Simulates store inventory management and pricing tasks."
-version: "0.1.0"
-author: "YourTeamName"
+name: "MultiChannelRetailEnv"
+description: "Multi-channel retail with disruption recovery - realistic inventory/pricing optimization"
+version: "0.2.0"
+author: "OpenEnv Hackathon"
+
 variables:
   - API_BASE_URL
   - MODEL_NAME
   - HF_TOKEN
+
 requirements:
   - python >=3.10
-  - fastapi
-  - pydantic
-  - uvicorn
-  - numpy
+  - fastapi >=0.100.0
+  - pydantic >=2.0.0
+  - uvicorn >=0.23.0
+  - numpy >=1.24.0
+  - requests >=2.31.0
+  - openai >=1.0.0
+
+tasks:
+  - easy
+  - medium_simple
+  - medium_challenge
+  - hard
+  - expert
+
+endpoints:
+  - POST /reset
+  - POST /step
+  - GET /state
+  - GET /tasks
+  - POST /evaluate
+  - GET /health

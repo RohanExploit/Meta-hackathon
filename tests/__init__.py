@@ -1,1 +1,1 @@
-# Test package for retail-inventory-env
+"""Init file for tests."""

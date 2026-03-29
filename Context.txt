@@ -2,6 +2,18 @@ The Task
 
 Build a complete, real-world OpenEnv environment that an AI agent can learn from through the standard  step() / reset() / state()  API.
 
+REBUILT SPECIFICATION (v2.0):
+============================
+Domain: Dynamic Multi-Channel Retail with Disruption Recovery
+
+Real-world scenario: A retailer managing inventory across 3 product categories
+with multiple customer segments (luxury/budget), dynamic demand shocks, and
+supply chain disruptions. Agent must adapt pricing, allocate inventory strategically,
+and recover from disruptions (stockouts, supplier delays, demand collapse).
+
+This is genuinely challenging: retailers face exactly this complexity daily.
+It's novel: no existing OpenEnv environment models multi-segment pricing + disruptions.
+
 Key Requirements at a Glance
 
 Must simulate a real-world task (not games or toys)

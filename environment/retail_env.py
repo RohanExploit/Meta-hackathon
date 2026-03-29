@@ -1,22 +1,44 @@
+"""Multi-channel retail environment with disruption recovery mechanics."""
 from __future__ import annotations
 
 import random
-from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .grader import compute_deterministic_score
-from .models import ActionType, RetailAction, RetailObservation, RetailState
+from .grader import score_episode
+from .models import (
+    AllocateAction,
+    ActionType,
+    DisruptionEvent,
+    NoOpAction,
+    OrderAction,
+    PromoteAction,
+    RetailAction,
+    RetailObservation,
+    RetailState,
+    SetPriceAction,
+)
 
 
 def _dump_model(model: Any) -> Dict[str, Any]:
+    """Convert Pydantic model to dict."""
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
 
 
-class RetailInventoryEnv:
+class MultiChannelRetailEnv:
+    """
+    Dynamic multi-channel retail with disruption recovery.
+    
+    Agents manage:
+    - Multi-segment pricing (luxury/budget customers)
+    - Inventory allocation across segments
+    - Supply chain disruptions (lead time, demand shocks)
+    - Recovery strategies (promotions, dynamic pricing)
+    """
+
     def __init__(self, seed: Optional[int] = None):
         self.seed = seed
         if seed is not None:
@@ -24,552 +46,481 @@ class RetailInventoryEnv:
             random.seed(seed)
 
         self.state: Optional[RetailState] = None
-        self.last_actions: List[str] = []
-        self.last_sales: Dict[str, int] = {}
-
         self.initial_cash: float = 0.0
         self._horizon: int = 30
-
-        self._invalid_action_penalty: float = 1.0
-        self._loop_penalty_value: float = 2.0
-        self._service_penalty_value: float = 0.5
-        self._price_volatility_penalty_weight: float = 0.0
-
         self.episode_metrics: Dict[str, float] = {}
+        
+        # Disruption parameters
+        self._disruption_probability: float = 0.15
+        self._disruption_recovery_days: int = 5
 
     def reset(self, task_config: Dict[str, Any]) -> RetailObservation:
-        """Reset environment with task-specific configuration."""
-
+        """Reset environment with task configuration."""
         if self.seed is not None:
             np.random.seed(self.seed)
             random.seed(self.seed)
 
         products = list(task_config["products"])
-
         self._horizon = int(task_config.get("horizon", 30))
-        lead_time = max(0, int(task_config.get("lead_time", 0)))
-        order_fixed_fee = float(task_config.get("order_fixed_fee", 0.0))
-        self._invalid_action_penalty = float(task_config.get("invalid_action_penalty", 1.0))
-        self._loop_penalty_value = float(task_config.get("loop_penalty", 2.0))
-        self._service_penalty_value = float(task_config.get("service_penalty", 0.5))
-        self._price_volatility_penalty_weight = float(
-            task_config.get("price_volatility_penalty_weight", 0.0)
-        )
 
-        inventory = {
-            product: int(task_config["initial_inventory"].get(product, 0)) for product in products
-        }
+        # Initialize state
+        inventory = {p: int(task_config["initial_inventory"].get(p, 5)) for p in products}
         cash = float(task_config["initial_cash"])
         self.initial_cash = cash
 
-        demand_pattern: Dict[str, float] = {}
-        for product in products:
-            if "fixed_demand" in task_config:
-                demand_pattern[product] = float(task_config["fixed_demand"][product])
-            elif "demand_ranges" in task_config:
-                demand_min, demand_max = task_config["demand_ranges"][product]
-                demand_pattern[product] = float(np.random.uniform(demand_min, demand_max))
-            else:
-                demand_pattern[product] = 1.0
+        # Demand patterns (hidden from agent)
+        base_demand_luxury = {p: float(task_config.get("base_demand_luxury", {}).get(p, 1.5)) for p in products}
+        base_demand_budget = {p: float(task_config.get("base_demand_budget", {}).get(p, 3.0)) for p in products}
+        
+        demand_elasticity = {p: float(task_config.get("demand_elasticity", {}).get(p, 1.2)) for p in products}
 
-        product_costs = {
-            product: float(task_config["product_costs"][product]) for product in products
-        }
-        product_holding_costs = {
-            product: float(task_config["holding_costs"][product]) for product in products
-        }
+        # Economics
+        product_costs = {p: float(task_config["product_costs"][p]) for p in products}
+        holding_costs = {p: float(task_config.get("holding_costs", {}).get(p, 0.1)) for p in products}
+        max_inventory = {p: float(task_config.get("max_inventory", {}).get(p, 50.0)) for p in products}
 
-        max_inventory = {
-            product: float(task_config.get("max_inventory", {}).get(product, float("inf")))
-            for product in products
-        }
-
-        demand_elasticity = {
-            product: float(task_config.get("demand_elasticity", {}).get(product, 1.0))
-            for product in products
-        }
-
-        seasonality_cfg = task_config.get("seasonality", {})
-        seasonality = {
-            product: list(seasonality_cfg.get(product, [1.0])) for product in products
-        }
-
-        reference_prices = {
-            product: float(
-                task_config.get("reference_prices", {}).get(
-                    product, task_config["product_costs"][product] * 1.5
-                )
-            )
-            for product in products
-        }
-
-        price_bounds_cfg = task_config.get("price_bounds", {})
+        # Pricing bounds
         price_bounds: Dict[str, Dict[str, float]] = {}
-        for product in products:
-            cost = product_costs[product]
-            product_bounds = price_bounds_cfg.get(product, {})
-            min_multiplier = float(product_bounds.get("min_multiplier", 1.10))
-            max_multiplier = float(product_bounds.get("max_multiplier", 2.00))
-            min_price = float(product_bounds.get("min_price", cost * min_multiplier))
-            max_price = float(product_bounds.get("max_price", cost * max_multiplier))
-            if max_price < min_price:
-                max_price = min_price
-            price_bounds[product] = {"min": min_price, "max": max_price}
+        for p in products:
+            cost = product_costs[p]
+            bounds_cfg = task_config.get("price_bounds", {}).get(p, {})
+            price_bounds[p] = {
+                "min": float(bounds_cfg.get("min", cost * 1.1)),
+                "max": float(bounds_cfg.get("max", cost * 3.0)),
+            }
 
-        initial_prices_cfg = task_config.get("initial_prices", {})
-        current_prices: Dict[str, float] = {}
-        for product in products:
-            raw_price = float(initial_prices_cfg.get(product, reference_prices[product]))
-            bounds = price_bounds[product]
-            current_prices[product] = float(min(max(raw_price, bounds["min"]), bounds["max"]))
+        # Initial prices
+        prices_luxury = {p: float(task_config.get("initial_prices_luxury", {}).get(p, product_costs[p] * 2.0)) for p in products}
+        prices_budget = {p: float(task_config.get("initial_prices_budget", {}).get(p, product_costs[p] * 1.3)) for p in products}
 
-        pending_orders = {product: 0 for product in products}
-        pending_order_queue: Dict[int, Dict[str, int]] = {}
+        # Supply chain
+        lead_time_mean = int(task_config.get("lead_time_mean", 2))
+        lead_time_variance = int(task_config.get("lead_time_variance", 1))
+        supplier_reliability = float(task_config.get("supplier_reliability", 0.9))
 
         self.state = RetailState(
-            inventory=inventory,
-            cash=cash,
             day=0,
-            demand_pattern=demand_pattern,
+            cash=cash,
+            inventory=inventory,
+            base_demand_luxury=base_demand_luxury,
+            base_demand_budget=base_demand_budget,
             demand_elasticity=demand_elasticity,
-            reference_prices=reference_prices,
-            seasonality=seasonality,
-            product_costs=product_costs,
-            product_holding_costs=product_holding_costs,
-            pending_orders=pending_orders,
-            pending_order_queue=pending_order_queue,
-            max_inventory=max_inventory,
-            current_prices=current_prices,
-            lead_time=lead_time,
-            order_fixed_fee=order_fixed_fee,
+            prices_luxury=prices_luxury,
+            prices_budget=prices_budget,
             price_bounds=price_bounds,
-            cumulative_metrics={},
-            task_name=task_config.get("name"),
-            horizon=self._horizon,
+            product_costs=product_costs,
+            holding_costs=holding_costs,
+            max_inventory=max_inventory,
+            lead_time_mean=lead_time_mean,
+            lead_time_variance=lead_time_variance,
+            pending_orders={p: 0 for p in products},
+            pending_order_queue={},
+            supplier_reliability=supplier_reliability,
+            active_disruptions=[],
+            disruption_history=[],
+            next_disruption_day=None,
+            cumulative_sales_luxury={p: 0.0 for p in products},
+            cumulative_sales_budget={p: 0.0 for p in products},
+            cumulative_revenue=0.0,
+            cumulative_holding_cost=0.0,
+            cumulative_stockouts=0,
+            cumulative_demand_lost=0.0,
         )
-
-        self.last_actions = []
-        self.last_sales = {product: 0 for product in products}
-
-        per_step_max_holding = 0.0
-        for product in products:
-            cap = max_inventory[product]
-            if cap == float("inf"):
-                cap = max(inventory[product], 1)
-            per_step_max_holding += float(cap) * product_holding_costs[product]
 
         self.episode_metrics = {
             "horizon": float(self._horizon),
             "num_products": float(len(products)),
-            "target_profit": float(task_config.get("target_profit", task_config.get("baseline_profit", 1.0))),
-            "baseline_profit": float(task_config.get("baseline_profit", 1.0)),
+            "baseline_profit": float(task_config.get("baseline_profit", 100.0)),
             "total_steps": 0.0,
+            "total_revenue": 0.0,
+            "total_cost": 0.0,
+            "total_holding_cost": 0.0,
+            "profit": 0.0,
             "total_demand": 0.0,
             "total_sales": 0.0,
-            "total_unmet_demand": 0.0,
-            "total_revenue": 0.0,
-            "total_variable_order_cost": 0.0,
-            "total_fixed_order_cost": 0.0,
-            "total_order_cost": 0.0,
-            "total_holding_cost": 0.0,
-            "total_service_penalty": 0.0,
-            "total_invalid_action_penalty": 0.0,
-            "total_loop_penalty": 0.0,
-            "total_price_volatility_penalty": 0.0,
-            "total_penalties": 0.0,
-            "price_change_count": 0.0,
-            "price_change_magnitude": 0.0,
-            "max_possible_holding_cost": max(0.0, per_step_max_holding * self._horizon),
-            "ending_inventory_ratio": 0.0,
-            "profit": 0.0,
-            "price_change_budget_scale": 0.35,
+            "fill_rate": 0.0,
+            "stockout_count": 0,
+            "disruption_events": 0,
+            "recovery_success_rate": 0.0,
+            "price_efficiency": 0.0,
+            "max_possible_holding_cost": float(
+                sum(float(max_inventory[p]) * float(holding_costs[p]) for p in products) * self._horizon
+            ),
         }
 
-        self._sync_metrics_into_state()
         return self._get_observation()
 
     def step(self, action: RetailAction) -> Tuple[RetailObservation, float, bool, Dict[str, Any]]:
+        """Execute one step in the environment."""
         if self.state is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
-        self._realize_due_arrivals()
-
         info: Dict[str, Any] = {
             "action_taken": _dump_model(action),
-            "invalid_action": False,
-            "arrivals": {},
+            "valid_action": True,
+            "disruption_event": None,
         }
 
-        step_revenue = 0.0
-        step_variable_order_cost = 0.0
-        step_fixed_order_cost = 0.0
-        step_holding_cost = 0.0
-        step_service_penalty = 0.0
-        step_invalid_penalty = 0.0
-        step_loop_penalty = 0.0
-        step_price_volatility_penalty = 0.0
+        # Check for new disruptions
+        self._check_disruptions()
 
-        action_str = self._action_signature(action)
+        # Apply disruption effects to demand
+        disruption_multiplier = self._compute_disruption_multiplier()
 
-        if self._detect_repeated_pattern(action_str):
-            step_loop_penalty = self._loop_penalty_value
-            info["loop_detected"] = True
-
-        if action.action == ActionType.ORDER:
-            valid_order, details = self._apply_order_action(action)
-            info.update(details)
-            if valid_order:
-                step_variable_order_cost = float(details.get("variable_order_cost", 0.0))
-                step_fixed_order_cost = float(details.get("fixed_order_cost", 0.0))
-            else:
-                info["invalid_action"] = True
-                step_invalid_penalty += self._invalid_action_penalty
+        # Process action
+        action_reward = 0.0
+        if action.action == ActionType.ALLOCATE:
+            action_reward = self._apply_allocate(action, info)
         elif action.action == ActionType.SET_PRICE:
-            valid_price, details = self._apply_set_price_action(action)
-            info.update(details)
-            if valid_price:
-                delta = float(details.get("price_change_abs", 0.0))
-                self.episode_metrics["price_change_count"] += 1.0
-                self.episode_metrics["price_change_magnitude"] += delta
-                step_price_volatility_penalty = self._price_volatility_penalty_weight * delta
-            else:
-                info["invalid_action"] = True
-                step_invalid_penalty += self._invalid_action_penalty
-        elif action.action == ActionType.NO_OP:
+            action_reward = self._apply_set_price(action, info)
+        elif action.action == ActionType.ORDER:
+            action_reward = self._apply_order(action, info)
+        elif action.action == ActionType.PROMOTE:
+            action_reward = self._apply_promote(action, info)
+        elif action.action == ActionType.NOOP:
             pass
         else:
-            info["invalid_action"] = True
-            step_invalid_penalty += self._invalid_action_penalty
+            info["valid_action"] = False
 
-        # Demand and sales execution
-        sales: Dict[str, int] = {}
-        demand_by_product: Dict[str, int] = {}
-        unmet_by_product: Dict[str, int] = {}
+        # Process pending order arrivals
+        self._realize_arrivals()
 
-        for product in self.state.inventory.keys():
-            demand = self._sample_demand(product)
-            demand_by_product[product] = demand
+        # Simulate market (demand and sales)
+        market_reward = self._simulate_market(disruption_multiplier)
 
-            available = int(self.state.inventory[product])
-            sold = min(available, demand)
-            unmet = max(0, demand - sold)
+        # Apply holding costs
+        holding_cost = self._apply_holding_costs()
 
-            sales[product] = sold
-            unmet_by_product[product] = unmet
+        # Total reward (step-wise signal aligned with profit)
+        total_reward = action_reward + market_reward - holding_cost
 
-            price = float(self.state.current_prices[product])
-            revenue = sold * price
-            step_revenue += revenue
-
-            self.state.inventory[product] = available - sold
-            step_service_penalty += unmet * self._service_penalty_value
-
-        self.last_sales = sales.copy()
-
-        # Cash updates from market and carrying cost
-        self.state.cash += step_revenue
-
-        for product, qty in self.state.inventory.items():
-            step_holding_cost += float(qty) * self.state.product_holding_costs[product]
-
-        self.state.cash -= step_holding_cost
-
-        step_penalties = (
-            step_service_penalty
-            + step_invalid_penalty
-            + step_loop_penalty
-            + step_price_volatility_penalty
-        )
-
-        reward = (
-            step_revenue
-            - step_variable_order_cost
-            - step_fixed_order_cost
-            - step_holding_cost
-            - step_penalties
-        )
-
-        # Day increment and done conditions
+        # Update state
         self.state.day += 1
-        done = self.state.day >= self._horizon or self.state.cash < 0.0
+        done = self.state.day >= self._horizon or self.state.cash < -100.0
 
-        # Metrics update (single-source accounting)
-        step_demand = float(sum(demand_by_product.values()))
-        step_sales = float(sum(sales.values()))
-        step_unmet = float(sum(unmet_by_product.values()))
+        # Finalize metrics
+        if done:
+            self._finalize_episode()
+            grader = score_episode(self.episode_metrics)
+            info["grader"] = grader
+            info["terminal_summary"] = {
+                "cash": float(self.state.cash),
+                "profit": float(self.episode_metrics.get("profit", 0.0)),
+                "metrics": {k: float(v) for k, v in self.episode_metrics.items()},
+                "grader": grader,
+            }
 
         self.episode_metrics["total_steps"] += 1.0
-        self.episode_metrics["total_demand"] += step_demand
-        self.episode_metrics["total_sales"] += step_sales
-        self.episode_metrics["total_unmet_demand"] += step_unmet
-        self.episode_metrics["total_revenue"] += step_revenue
-        self.episode_metrics["total_variable_order_cost"] += step_variable_order_cost
-        self.episode_metrics["total_fixed_order_cost"] += step_fixed_order_cost
-        self.episode_metrics["total_order_cost"] += step_variable_order_cost + step_fixed_order_cost
-        self.episode_metrics["total_holding_cost"] += step_holding_cost
-        self.episode_metrics["total_service_penalty"] += step_service_penalty
-        self.episode_metrics["total_invalid_action_penalty"] += step_invalid_penalty
-        self.episode_metrics["total_loop_penalty"] += step_loop_penalty
-        self.episode_metrics["total_price_volatility_penalty"] += step_price_volatility_penalty
-        self.episode_metrics["total_penalties"] += step_penalties
-
-        self.last_actions.append(action_str)
-        if len(self.last_actions) > 14:
-            self.last_actions.pop(0)
-
-        info.update(
-            {
-                "sales": sales,
-                "demand": demand_by_product,
-                "unmet_demand": unmet_by_product,
-                "reward_components": {
-                    "revenue": step_revenue,
-                    "variable_order_cost": step_variable_order_cost,
-                    "fixed_order_cost": step_fixed_order_cost,
-                    "holding_cost": step_holding_cost,
-                    "service_penalty": step_service_penalty,
-                    "invalid_action_penalty": step_invalid_penalty,
-                    "loop_penalty": step_loop_penalty,
-                    "price_volatility_penalty": step_price_volatility_penalty,
-                },
-            }
-        )
-
-        if done:
-            self._finalize_episode_summary(info)
-
-        self._sync_metrics_into_state()
-        info["episode_metrics"] = self._metrics_snapshot()
 
         observation = self._get_observation()
-        return observation, reward, done, info
+        return observation, total_reward, done, info
 
-    def _action_signature(self, action: RetailAction) -> str:
-        if action.action == ActionType.ORDER:
-            return f"order:{action.product}:{action.quantity}"
-        if action.action == ActionType.SET_PRICE:
-            # bucket for repeated-pattern detection robustness to tiny wiggles
-            bucket = round(float(action.new_price), 2)
-            return f"set_price:{action.product}:{bucket}"
-        return "noop"
-
-    def _detect_repeated_pattern(self, current_signature: str) -> bool:
-        if len(self.last_actions) < 3:
-            return False
-
-        recent = self.last_actions[-6:]
-
-        # Direct repetition of same action
-        if len(recent) >= 3 and recent[-1] == recent[-2] == recent[-3]:
-            return True
-
-        # Alternating two-action loops, e.g. A,B,A,B
-        if len(recent) >= 4:
-            pattern4 = recent[-4:]
-            if pattern4[0] == pattern4[2] and pattern4[1] == pattern4[3] and pattern4[0] != pattern4[1]:
-                return True
-
-        # Dominant repetition in short window (micro-variation bypass resistance)
-        extended = recent + [current_signature]
-        top_count = Counter(extended).most_common(1)[0][1]
-        if len(extended) >= 5 and top_count >= 4:
-            return True
-
-        return False
-
-    def _realize_due_arrivals(self) -> None:
+    def _check_disruptions(self) -> None:
+        """Randomly trigger disruptions (supply/demand shocks)."""
         assert self.state is not None
-        due_day = int(self.state.day)
-        due = self.state.pending_order_queue.pop(due_day, {})
-        if not due:
-            return
 
+        # Check if any active disruptions should end
+        for disp in self.state.active_disruptions[:]:
+            if self.state.day >= disp.day_triggered + disp.duration_days:
+                self.state.active_disruptions.remove(disp)
+
+        # Chance of new disruption
+        if random.random() < self._disruption_probability:
+            event_types = ["demand_collapse", "supply_delay", "demand_spike"]
+            event_type = random.choice(event_types)
+            product = random.choice(list(self.state.inventory.keys()))
+            severity = random.uniform(0.3, 0.9)
+            duration = random.randint(2, 5)
+
+            disruption = DisruptionEvent(
+                event_type=event_type,
+                product=product,
+                severity=severity,
+                duration_days=duration,
+                day_triggered=self.state.day,
+            )
+            self.state.active_disruptions.append(disruption)
+            self.state.disruption_history.append(disruption)
+            self.episode_metrics["disruption_events"] += 1.0
+
+    def _compute_disruption_multiplier(self) -> float:
+        """Compute demand multiplier based on active disruptions."""
+        if not self.state.active_disruptions:
+            return 1.0
+        
+        # Demand collapses reduce demand, spikes increase it
+        multiplier = 1.0
+        for disp in self.state.active_disruptions:
+            if disp.event_type == "demand_collapse":
+                multiplier *= (1.0 - disp.severity * 0.8)
+            elif disp.event_type == "demand_spike":
+                multiplier *= (1.0 + disp.severity * 1.5)
+        
+        return max(0.1, min(3.0, multiplier))  # Clamp extremes
+
+    def _apply_allocate(self, action: RetailAction, info: Dict[str, Any]) -> float:
+        """Allocate inventory to luxury and budget segments."""
+        assert self.state is not None
+        
+        if action.product not in self.state.inventory:
+            info["valid_action"] = False
+            return -1.0
+
+        total_allocated = action.luxury_units + action.budget_units
+        if total_allocated > self.state.inventory[action.product]:
+            info["valid_action"] = False
+            return -1.0
+
+        # Store allocation for market simulation
+        info["allocation_luxury"] = action.luxury_units
+        info["allocation_budget"] = action.budget_units
+        
+        return 0.5  # Small reward for proactive allocation
+
+    def _apply_set_price(self, action: RetailAction, info: Dict[str, Any]) -> float:
+        """Set price for a segment."""
+        assert self.state is not None
+        
+        if action.product not in self.state.price_bounds:
+            info["valid_action"] = False
+            return -1.0
+
+        bounds = self.state.price_bounds[action.product]
+        if action.new_price < bounds["min"] or action.new_price > bounds["max"]:
+            info["valid_action"] = False
+            return -1.0
+
+        if action.segment == "luxury":
+            self.state.prices_luxury[action.product] = action.new_price
+        elif action.segment == "budget":
+            self.state.prices_budget[action.product] = action.new_price
+        else:
+            info["valid_action"] = False
+            return -1.0
+
+        info["price_set"] = action.new_price
+        return 0.0  # Neutral reward; actual benefit comes from sales
+
+    def _apply_order(self, action: RetailAction, info: Dict[str, Any]) -> float:
+        """Place an order with supplier (subject to reliability and lead time)."""
+        assert self.state is not None
+        
+        if action.product not in self.state.inventory:
+            info["valid_action"] = False
+            return -2.0
+
+        cost = float(action.quantity) * self.state.product_costs[action.product]
+        if cost > self.state.cash:
+            info["valid_action"] = False
+            return -2.0
+
+        # Deduct cost immediately
+        self.state.cash -= cost
+
+        # Stochastic lead time
+        lead_time = max(0, int(np.random.normal(self.state.lead_time_mean, self.state.lead_time_variance)))
+        arrival_day = self.state.day + lead_time
+
+        # Chance order doesn't arrive (supplier unreliability)
+        if random.random() > self.state.supplier_reliability:
+            info["order_lost"] = True
+            return -1.0  # Penalty for lost order
+
+        arrival_bucket = self.state.pending_order_queue.setdefault(arrival_day, {})
+        arrival_bucket[action.product] = int(arrival_bucket.get(action.product, 0)) + action.quantity
+        self.state.pending_orders[action.product] += action.quantity
+
+        info["order_enqueued"] = True
+        info["arrival_day"] = arrival_day
+        return 0.0  # Neutral; benefit comes later
+
+    def _apply_promote(self, action: RetailAction, info: Dict[str, Any]) -> float:
+        """Run a promotional campaign (increases demand at cost)."""
+        assert self.state is not None
+        
+        if action.budget_allocated > self.state.cash:
+            info["valid_action"] = False
+            return -1.0
+
+        self.state.cash -= action.budget_allocated
+        info["promotion_budget"] = action.budget_allocated
+        info["promotion_multiplier"] = 1.0 + (action.budget_allocated / 100.0)  # ROI estimate
+
+        return -action.budget_allocated / 10.0  # Small upfront cost
+
+    def _realize_arrivals(self) -> None:
+        """Process pending orders that arrive today."""
+        assert self.state is not None
+        
+        due = self.state.pending_order_queue.pop(self.state.day, {})
         for product, qty in due.items():
             self.state.inventory[product] += int(qty)
             self.state.pending_orders[product] = max(
-                0, int(self.state.pending_orders.get(product, 0)) - int(qty)
+                0, int(self.state.pending_orders[product]) - int(qty)
             )
 
-    def _enqueue_order(self, product: str, quantity: int) -> None:
+    def _simulate_market(self, disruption_multiplier: float) -> float:
+        """Simulate demand, allocations, and sales for each segment."""
         assert self.state is not None
+        
+        total_revenue = 0.0
+        total_demand = 0.0
+        total_sales = 0.0
 
-        if self.state.lead_time == 0:
-            self.state.inventory[product] += quantity
-            return
+        for product in self.state.inventory.keys():
+            # Base demand
+            demand_lux = self._sample_demand(
+                self.state.base_demand_luxury[product],
+                self.state.prices_luxury[product],
+                self.state.demand_elasticity[product],
+                disruption_multiplier,
+            )
+            demand_bdg = self._sample_demand(
+                self.state.base_demand_budget[product],
+                self.state.prices_budget[product],
+                self.state.demand_elasticity[product],
+                disruption_multiplier,
+            )
 
-        arrival_day = int(self.state.day) + int(self.state.lead_time)
-        bucket = self.state.pending_order_queue.setdefault(arrival_day, {})
-        bucket[product] = int(bucket.get(product, 0)) + int(quantity)
-        self.state.pending_orders[product] = int(self.state.pending_orders.get(product, 0)) + int(quantity)
+            total_demand += demand_lux + demand_bdg
 
-    def _apply_order_action(self, action: RetailAction) -> Tuple[bool, Dict[str, Any]]:
+            # Allocate inventory (simple heuristic: luxury gets priority if priced higher)
+            available = int(self.state.inventory[product])
+            lux_price = self.state.prices_luxury[product]
+            bdg_price = self.state.prices_budget[product]
+
+            # Luxury segment gets preference if higher margin
+            if lux_price > bdg_price:
+                sales_lux = min(int(demand_lux), available // 2)
+                sales_bdg = min(int(demand_bdg), available - sales_lux)
+            else:
+                sales_bdg = min(int(demand_bdg), available // 2)
+                sales_lux = min(int(demand_lux), available - sales_bdg)
+
+            # Revenue
+            revenue_lux = sales_lux * lux_price
+            revenue_bdg = sales_bdg * bdg_price
+            total_revenue += revenue_lux + revenue_bdg
+
+            # Update inventory and metrics
+            self.state.inventory[product] -= sales_lux + sales_bdg
+            self.state.cumulative_sales_luxury[product] += sales_lux
+            self.state.cumulative_sales_budget[product] += sales_bdg
+            total_sales += sales_lux + sales_bdg
+
+            # Stockout penalty
+            unmet_lux = max(0, int(demand_lux) - sales_lux)
+            unmet_bdg = max(0, int(demand_bdg) - sales_bdg)
+            unmet = unmet_lux + unmet_bdg
+
+            if unmet > 0:
+                self.episode_metrics["stockout_count"] += 1.0
+                self.state.cumulative_stockouts += 1
+                self.state.cumulative_demand_lost += float(unmet)
+
+        self.state.cash += total_revenue
+        self.state.cumulative_revenue += total_revenue
+
+        self.episode_metrics["total_revenue"] += total_revenue
+        self.episode_metrics["total_demand"] += total_demand
+        self.episode_metrics["total_sales"] += total_sales
+
+        # Return reward signal (revenue - stockout penalty)
+        stockout_penalty = self.state.cumulative_stockouts * 2.0
+        return total_revenue - stockout_penalty
+
+    def _sample_demand(
+        self,
+        base_demand: float,
+        price: float,
+        elasticity: float,
+        disruption_multiplier: float,
+    ) -> int:
+        """Sample demand with price elasticity and disruptions."""
+        # Reference price is cost * 1.5
+        reference_price = 1.5  # Normalized
+        price_ratio = price / reference_price if reference_price > 0 else 1.0
+        price_effect = price_ratio ** (-elasticity)
+        
+        effective_demand = base_demand * price_effect * disruption_multiplier
+        effective_demand = max(0.1, effective_demand)
+        
+        return int(np.random.poisson(effective_demand))
+
+    def _apply_holding_costs(self) -> float:
+        """Apply inventory holding costs."""
         assert self.state is not None
-
-        details: Dict[str, Any] = {"order_enqueued": False}
-
-        if action.product not in self.state.inventory:
-            details["invalid_reason"] = "unknown_product"
-            return False, details
-
-        quantity = int(action.quantity)
-        if quantity <= 0:
-            details["invalid_reason"] = "non_positive_quantity"
-            return False, details
-
-        on_hand = int(self.state.inventory[action.product])
-        in_transit = int(self.state.pending_orders.get(action.product, 0))
-        cap = float(self.state.max_inventory[action.product])
-
-        if on_hand + in_transit + quantity > cap:
-            details["invalid_reason"] = "inventory_cap_exceeded"
-            return False, details
-
-        variable_order_cost = float(quantity) * self.state.product_costs[action.product]
-        fixed_order_cost = float(self.state.order_fixed_fee)
-        total_cost = variable_order_cost + fixed_order_cost
-
-        if total_cost > float(self.state.cash):
-            details["invalid_reason"] = "insufficient_cash"
-            return False, details
+        
+        total_cost = 0.0
+        for product, qty in self.state.inventory.items():
+            cost = float(qty) * self.state.holding_costs[product]
+            total_cost += cost
 
         self.state.cash -= total_cost
-        self._enqueue_order(action.product, quantity)
+        self.state.cumulative_holding_cost += total_cost
+        self.episode_metrics["total_cost"] += total_cost
+        self.episode_metrics["total_holding_cost"] += total_cost
+        
+        return total_cost
 
-        details.update(
-            {
-                "order_enqueued": True,
-                "order_arrival_day": int(self.state.day) + int(self.state.lead_time),
-                "variable_order_cost": variable_order_cost,
-                "fixed_order_cost": fixed_order_cost,
-            }
-        )
-        return True, details
-
-    def _apply_set_price_action(self, action: RetailAction) -> Tuple[bool, Dict[str, Any]]:
+    def _finalize_episode(self) -> None:
+        """Finalize episode metrics."""
         assert self.state is not None
-
-        details: Dict[str, Any] = {"price_updated": False}
-
-        if action.product not in self.state.current_prices:
-            details["invalid_reason"] = "unknown_product"
-            return False, details
-
-        new_price = float(action.new_price)
-        bounds = self.state.price_bounds[action.product]
-        if new_price < bounds["min"] or new_price > bounds["max"]:
-            details["invalid_reason"] = "price_out_of_bounds"
-            return False, details
-
-        old_price = float(self.state.current_prices[action.product])
-        self.state.current_prices[action.product] = new_price
-
-        details.update(
-            {
-                "price_updated": True,
-                "old_price": old_price,
-                "new_price": new_price,
-                "price_change_abs": abs(new_price - old_price),
-            }
-        )
-        return True, details
-
-    def _seasonality_factor(self, product: str, day: int) -> float:
-        assert self.state is not None
-
-        pattern = self.state.seasonality.get(product, [1.0])
-        if not pattern:
-            return 1.0
-        return max(0.0, float(pattern[day % len(pattern)]))
-
-    def _price_effect(self, product: str) -> float:
-        assert self.state is not None
-
-        reference_price = max(1e-6, float(self.state.reference_prices.get(product, 1.0)))
-        current_price = max(1e-6, float(self.state.current_prices[product]))
-        elasticity = max(0.0, float(self.state.demand_elasticity.get(product, 1.0)))
-
-        # Smooth demand shrinkage as price rises relative to reference
-        ratio = current_price / reference_price
-        effect = ratio ** (-elasticity)
-
-        # Clamp to avoid degenerate extremes while preserving directional signal
-        return float(min(max(effect, 0.05), 3.0))
-
-    def _sample_demand(self, product: str) -> int:
-        assert self.state is not None
-
-        base_lambda = max(0.0, float(self.state.demand_pattern.get(product, 0.0)))
-        seasonality = self._seasonality_factor(product, self.state.day)
-        price_effect = self._price_effect(product)
-        effective_lambda = max(0.0, base_lambda * seasonality * price_effect)
-
-        return int(np.random.poisson(effective_lambda))
-
-    def _metrics_snapshot(self) -> Dict[str, float]:
-        snapshot: Dict[str, float] = {}
-        for key, value in self.episode_metrics.items():
-            snapshot[key] = float(value)
-        return snapshot
-
-    def _sync_metrics_into_state(self) -> None:
-        if self.state is None:
-            return
-        self.state.cumulative_metrics = self._metrics_snapshot()
-
-    def _finalize_episode_summary(self, info: Dict[str, Any]) -> None:
-        assert self.state is not None
-
-        inventory_value = 0.0
-        max_capacity = 0.0
-        used_capacity = 0.0
-        for product, qty in self.state.inventory.items():
-            inventory_value += float(qty) * self.state.product_costs[product]
-            cap = float(self.state.max_inventory[product])
-            if cap != float("inf"):
-                max_capacity += cap
-                used_capacity += float(qty)
-
-        if max_capacity > 0:
-            self.episode_metrics["ending_inventory_ratio"] = min(1.0, used_capacity / max_capacity)
-        else:
-            self.episode_metrics["ending_inventory_ratio"] = 0.0
-
-        profit = float(self.state.cash) + inventory_value - self.initial_cash
+        
+        profit = self.state.cash - self.initial_cash
         self.episode_metrics["profit"] = profit
-        self.episode_metrics["horizon"] = float(self._horizon)
-        self.episode_metrics["num_products"] = float(len(self.state.inventory))
 
-        grader_out = compute_deterministic_score(self.episode_metrics)
+        if self.episode_metrics["total_demand"] > 0:
+            self.episode_metrics["fill_rate"] = self.episode_metrics["total_sales"] / self.episode_metrics["total_demand"]
+        else:
+            self.episode_metrics["fill_rate"] = 1.0
 
-        terminal_summary = {
-            "cash": float(self.state.cash),
-            "inventory_value": float(inventory_value),
-            "profit": profit,
-            "metrics": self._metrics_snapshot(),
-            "grader": grader_out,
-        }
-
-        info["grader"] = grader_out
-        info["terminal_summary"] = terminal_summary
+        if self.episode_metrics["disruption_events"] > 0:
+            recovery_count = len([d for d in self.state.disruption_history if d.duration_days < 5])
+            self.episode_metrics["recovery_success_rate"] = recovery_count / self.episode_metrics["disruption_events"]
+        else:
+            self.episode_metrics["recovery_success_rate"] = 0.0
 
     def _get_observation(self) -> RetailObservation:
+        """Get partial state observation for agent."""
         if self.state is None:
             raise RuntimeError("Environment not initialized")
 
+        # Deterministic proxies derived from current state
+        recent_demand_luxury = {
+            p: float(max(0.1, self.state.base_demand_luxury[p]))
+            for p in self.state.inventory.keys()
+        }
+        recent_demand_budget = {
+            p: float(max(0.1, self.state.base_demand_budget[p]))
+            for p in self.state.inventory.keys()
+        }
+        recent_stockouts = {
+            p: int(1 if self.state.cumulative_demand_lost > 0 else 0)
+            for p in self.state.inventory.keys()
+        }
+
+        disruption_active = len(self.state.active_disruptions) > 0
+        disruption_severity = max([d.severity for d in self.state.active_disruptions], default=0.0)
+        market_confidence = max(0.0, 0.9 - (self.state.day / self._horizon) * 0.3)
+
         return RetailObservation(
+            day=self.state.day,
+            cash=self.state.cash,
             inventory=self.state.inventory.copy(),
-            cash=float(self.state.cash),
-            day=int(self.state.day),
-            sales_history=self.last_sales.copy(),
-            price=self.state.current_prices.copy(),
+            recent_demand_luxury=recent_demand_luxury,
+            recent_demand_budget=recent_demand_budget,
+            recent_stockouts=recent_stockouts,
+            prices_luxury=self.state.prices_luxury.copy(),
+            prices_budget=self.state.prices_budget.copy(),
+            disruption_active=disruption_active,
+            disruption_severity=disruption_severity,
+            market_confidence=market_confidence,
         )
 
     def get_state(self) -> Dict[str, Any]:
+        """Get full internal state."""
         if self.state is None:
             raise RuntimeError("Environment not initialized")
-
-        state_dict = _dump_model(self.state)
-        state_dict["demand_pattern"] = {
-            product: 0.0 for product in state_dict["demand_pattern"].keys()
-        }
-        return state_dict
+        
+        return _dump_model(self.state)

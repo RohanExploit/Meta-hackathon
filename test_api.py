@@ -5,7 +5,7 @@ import sys
 import json
 sys.path.insert(0, '.')
 
-from environment.retail_env import RetailInventoryEnv
+from environment.retail_env import MultiChannelRetailEnv
 from environment.models import OrderAction, ActionType
 
 def test_api_simulation():
@@ -13,7 +13,7 @@ def test_api_simulation():
     print("Testing API-like interaction...")
     
     # Create environment (simulating server startup)
-    env = RetailInventoryEnv(seed=42)
+    env = MultiChannelRetailEnv(seed=42)
     
     # Simulate /reset endpoint
     print("\n1. Testing reset (like POST /reset)")
@@ -21,10 +21,14 @@ def test_api_simulation():
         "products": ["Widget"],
         "initial_inventory": {"Widget": 10},
         "initial_cash": 100.0,
-        "fixed_demand": {"Widget": 2.0},
+        "base_demand_luxury": {"Widget": 1.0},
+        "base_demand_budget": {"Widget": 2.0},
         "product_costs": {"Widget": 5.0},
         "holding_costs": {"Widget": 0.1},
-        "max_inventory": {"Widget": 100}
+        "max_inventory": {"Widget": 100},
+        "initial_prices_luxury": {"Widget": 10.0},
+        "initial_prices_budget": {"Widget": 7.0},
+        "price_bounds": {"Widget": {"min": 5.5, "max": 15.0}},
     }
     
     obs = env.reset(task_config)

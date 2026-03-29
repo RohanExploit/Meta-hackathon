@@ -2,13 +2,12 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy pyproject.toml and install dependencies
-COPY pyproject.toml .
+# Copy source code first (editable install needs package files present)
+COPY . .
+
+# Install dependencies
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
-
-# Copy source code
-COPY . .
 
 # Expose port
 EXPOSE 8000
