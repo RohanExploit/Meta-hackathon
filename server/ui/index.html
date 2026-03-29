@@ -325,6 +325,7 @@
               <option value="noop">noop</option>
               <option value="order">order</option>
               <option value="set_price">set_price</option>
+              <option value="promote">promote</option>
             </select>
           </div>
         </div>
@@ -340,10 +341,45 @@
           </div>
         </div>
 
+        <div class="row2" style="margin-top:8px">
+          <div>
+            <label class="tiny">Segment (set_price)</label>
+            <select id="segmentSelect">
+              <option value="budget">budget</option>
+              <option value="luxury">luxury</option>
+            </select>
+          </div>
+          <div>
+            <label class="tiny">Mode</label>
+            <select id="modeSelect">
+              <option value="manual">manual</option>
+              <option value="heuristic">heuristic</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row2" style="margin-top:8px">
+          <div>
+            <label class="tiny">Segment (for set_price)</label>
+            <select id="segmentSelect">
+              <option value="budget">budget</option>
+              <option value="luxury">luxury</option>
+            </select>
+          </div>
+          <div>
+            <label class="tiny">Execution Mode</label>
+            <select id="modeSelect">
+              <option value="manual">manual</option>
+              <option value="heuristic">heuristic</option>
+            </select>
+          </div>
+        </div>
+
         <div class="hotkeys">
           <span class="chip">/reset [task] [seed]</span>
           <span class="chip">/step order Widget 2</span>
-          <span class="chip">/step set_price Widget 9.5</span>
+          <span class="chip">/step set_price Widget budget 9.5</span>
+          <span class="chip">/step promote Widget 8</span>
           <span class="chip">/run</span>
           <span class="chip">/ping</span>
           <span class="chip">Ctrl+K focus command</span>
@@ -578,14 +614,23 @@
       const pScore = typeof grader.profit_score === "number" ? grader.profit_score : null;
       const eScore = typeof grader.efficiency_score === "number" ? grader.efficiency_score : null;
 
-      setKpi("kFill", fillRate == null ? "-" : fillRate.toFixed(3));
+      const fallbackFill = (() => {
+        const m = info?.episode_metrics;
+        if (!m) return null;
+        const d = Number(m.total_demand || 0);
+        const s = Number(m.total_sales || 0);
+        if (d <= 0) return null;
+        return s / d;
+      })();
+
+      setKpi("kFill", fillRate == null ? (fallbackFill == null ? "-" : fallbackFill.toFixed(3)) : fillRate.toFixed(3));
       setKpi("kScore", score == null ? "-" : score.toFixed(3));
       setKpi("kProfit", pScore == null ? "-" : pScore.toFixed(3));
       setKpi("kEff", eScore == null ? "-" : eScore.toFixed(3));
 
       addSeriesPoint("cash", Number(o.cash));
       addSeriesPoint("reward", Number(state.reward));
-      addSeriesPoint("fill", fillRate == null ? 0 : fillRate);
+      addSeriesPoint("fill", fillRate == null ? (fallbackFill == null ? 0 : fallbackFill) : fillRate);
       addSeriesPoint("score", score == null ? 0 : score);
       refreshCharts();
       updateTable();
@@ -596,9 +641,11 @@
       const action = $("actionType").value;
       const product = $("productInput").value.trim();
       const raw = $("valueInput").value.trim();
+      const segment = $("segmentSelect").value;
 
       if (action === "order") return { action: "order", product, quantity: Number.parseInt(raw || "0", 10) };
-      if (action === "set_price") return { action: "set_price", product, new_price: Number.parseFloat(raw || "0") };
+      if (action === "set_price") return { action: "set_price", product, segment, new_price: Number.parseFloat(raw || "0") };
+      if (action === "promote") return { action: "promote", product, budget_allocated: Number.parseFloat(raw || "0") };
       return { action: "noop" };
     }
 
@@ -618,6 +665,9 @@
       const s = Number(o.sales_history?.[p] ?? 0);
       if (min <= Math.max(2, s)) {
         return { action: "order", product: p, quantity: Math.max(2, s + 1) };
+      }
+      if (o.disruption_active === true && Number(o.cash || 0) > 20) {
+        return { action: "promote", product: p, budget_allocated: 8.0 };
       }
       return { action: "noop" };
     }
@@ -724,11 +774,19 @@
             return;
           }
           if (kind === "set_price") {
-            if (parts.length < 4) {
-              line("CMD ERR: /step set_price <product> <price>", "bad");
+            if (parts.length < 5) {
+              line("CMD ERR: /step set_price <product> <segment> <price>", "bad");
               return;
             }
-            await doStep({ action: "set_price", product: parts[2], new_price: Number(parts[3]) });
+            await doStep({ action: "set_price", product: parts[2], segment: parts[3], new_price: Number(parts[4]) });
+            return;
+          }
+          if (kind === "promote") {
+            if (parts.length < 4) {
+              line("CMD ERR: /step promote <product> <budget>", "bad");
+              return;
+            }
+            await doStep({ action: "promote", product: parts[2], budget_allocated: Number(parts[3]) });
             return;
           }
           line("CMD ERR: unknown step action", "bad");
@@ -747,7 +805,11 @@
     });
     $("stepBtn").addEventListener("click", async () => {
       if (!state.observation || state.done) return;
-      try { await doStep(manualAction()); } catch (e) { line(`STEP FAILED ${e.message}`, "bad"); }
+      try {
+        const mode = $("modeSelect").value;
+        const action = mode === "heuristic" ? autoAction() : manualAction();
+        await doStep(action);
+      } catch (e) { line(`STEP FAILED ${e.message}`, "bad"); }
     });
     $("auto1Btn").addEventListener("click", async () => {
       if (!state.observation || state.done) return;
