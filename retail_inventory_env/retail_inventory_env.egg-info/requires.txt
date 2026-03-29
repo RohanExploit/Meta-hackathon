@@ -1,0 +1,8 @@
+fastapi>=0.68.0
+uvicorn>=0.15.0
+pydantic>=1.8.0
+numpy>=1.21.0
+
+[dev]
+pytest>=7.4.0
+httpx>=0.26.0

@@ -1,0 +1,14 @@
+name: "RetailInventoryEnv"
+description: "Simulates store inventory management and pricing tasks."
+version: "0.1.0"
+author: "YourTeamName"
+variables:
+  - API_BASE_URL
+  - MODEL_NAME
+  - HF_TOKEN
+requirements:
+  - python >=3.10
+  - fastapi
+  - pydantic
+  - uvicorn
+  - numpy

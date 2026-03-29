@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: retail-inventory-env
+Version: 0.1.0
+Summary: OpenEnv compliant retail inventory management environment
+Author: YourTeamName
+Project-URL: Homepage, https://github.com/yourusername/retail-inventory-env
+Requires-Dist: fastapi>=0.68.0
+Requires-Dist: uvicorn>=0.15.0
+Requires-Dist: pydantic>=1.8.0
+Requires-Dist: numpy>=1.21.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Requires-Dist: httpx>=0.26.0; extra == "dev"

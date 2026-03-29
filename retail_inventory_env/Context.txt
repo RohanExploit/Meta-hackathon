@@ -1,0 +1,836 @@
+The Task
+
+Build a complete, real-world OpenEnv environment that an AI agent can learn from through the standard  step() / reset() / state()  API.
+
+Key Requirements at a Glance
+
+Must simulate a real-world task (not games or toys)
+
+Implement full OpenEnv spec: typed models, step()/reset()/state(), openenv.yaml
+
+Minimum 3 tasks with agent graders (easy → medium → hard, scores 0.0–1.0)
+
+Meaningful reward function with partial progress signals
+
+Baseline inference script with reproducible scores
+
+Deploy to Hugging Face Spaces + working Dockerfile
+
+README with environment description, action/observation spaces, setup instructions
+
+Functional Requirements
+
+Real-world task simulation
+
+The environment must simulate a task humans actually do. Not games, not toys. Examples: email triage, code review, data cleaning, scheduling, customer support, content moderation.
+
+OpenEnv spec compliance
+
+Implement the full OpenEnv interface: typed Observation, Action, and Reward Pydantic models. step(action) → returns observation, reward, done, info. reset() → returns initial observation. state() → returns current state. openenv.yaml with metadata. Tested via openenv validate.
+
+Minimum 3 tasks with agent graders
+
+Each task defines a concrete objective an agent must accomplish, with a programmatic grader that scores performance (0.0–1.0). Tasks should range: easy → medium → hard. Graders must have clear, deterministic success/failure criteria.
+
+Meaningful reward function
+
+Provides signal over the full trajectory (not just binary end-of-episode). Rewards partial progress toward task completion. Penalizes clearly undesirable behavior (e.g. infinite loops, destructive actions).
+
+Baseline inference script
+
+Uses the OpenAI API client to run a model against the environment. Reads API credentials from environment variables (OPENAI_API_KEY). Produces a reproducible baseline score on all 3 tasks.
+
+Detailed Requirements
+
+Non-Functional Requirements
+
+Deploys to a Hugging Face Space
+
+Environment must run as a containerized HF Space tagged with openenv.
+
+Containerized execution
+
+Must include a working Dockerfile. The environment should start cleanly with docker build + docker run.
+
+Documentation
+
+README must include: environment description and motivation, action and observation space definitions, task descriptions with expected difficulty, setup and usage instructions, baseline scores.
+
+Parameter
+
+Weight
+
+Description
+
+Real-world utility
+
+30%
+
+Does the environment model a genuine task? Would someone actually use this to train or evaluate agents?
+
+Task & grader quality
+
+25%
+
+Are tasks well-defined with clear objectives? Do graders accurately and fairly measure success? Meaningful difficulty progression?
+
+Environment design
+
+20%
+
+Clean state management, sensible action/observation spaces, good reward shaping, proper episode boundaries.
+
+Code quality & spec compliance
+
+15%
+
+Follows OpenEnv spec, clean project structure, typed models, documented, tested, Dockerfile works.
+
+Creativity & novelty
+
+10%
+
+Novel problem domain, interesting mechanics, clever reward design, original approach.
+
+Scoring Breakdown
+
+Real-world utility (30%)
+
+•  0–5: Toy/artificial problem with no practical application
+
+•  6–15: Valid domain but shallow modeling of the real task
+
+•  16–25: Good domain modeling, would be useful for agent evaluation
+
+•  26–30: Excellent — fills a real gap, immediate value for the RL/agent community
+
+Task & grader quality (25%)
+
+•  3+ tasks with difficulty range?
+
+•  Graders produce scores between 0.0–1.0?
+
+•  Graders deterministic and reproducible?
+
+•  Hard task genuinely challenges frontier models?
+
+Environment design (20%)
+
+•  reset() produces clean state?
+
+•  Action/observation types well-designed and documented?
+
+•  Reward function provides useful varying signal (not just sparse)?
+
+•  Episode boundaries sensible?
+
+Code quality & spec compliance (15%)
+
+•  openenv validate passes?
+
+•  docker build && docker run works?
+
+•  HF Space deploys and responds?
+
+•  Baseline script runs and reproduces scores?
+
+Creativity & novelty (10%)
+
+•  Domain we haven’t seen in OpenEnv before?
+
+•  Reward design has interesting properties?
+
+•  Clever mechanics that make the environment engaging?
+
+Evaluation Criteria
+
+Phase 1: Automated Validation
+
+Pass/fail gate — HF Space deploys, OpenEnv spec compliance, Dockerfile builds, baseline reproduces, 3+ tasks with graders.
+
+Phase 2: Agentic Evaluation
+
+Scored — baseline agent re-run, standard Open LLM agent (e.g. Nemotron 3 Super) run against all environments, score variance check.
+
+Phase 3: Human Review
+
+Top submissions reviewed by Meta and Hugging Face engineers for real-world utility, creativity, and exploit checks.
+
+Disqualification Criteria
+
+Environment does not deploy or respond
+
+Plagiarized or trivially modified existing environments
+
+Graders that always return the same score
+
+No baseline inference script
+
+How Judging works
+
+Pre-Submission Checklist  — all must pass or you're disqualified
+
+HF Space deploys
+
+Automated ping to the Space URL — must return 200 and respond to reset()
+
+OpenEnv spec compliance
+
+Validate openenv.yaml, typed models, step()/reset()/state() endpoints
+
+Dockerfile builds
+
+Automated docker build on the submitted repo
+
+Baseline reproduces
+
+Run the submitted inference script — must complete without error and produce scores
+
+3+ tasks with graders
+
+Enumerate tasks, run each grader, verify scores in 0.0–1.0 range
+
+Additional Instructions
+
+Before submitting, ensure the following variables are defined in your environment configuration:  
+
+API_BASE_URL   The API endpoint for the LLM.  
+
+MODEL_NAME     The model identifier to use for inference. 
+
+HF_TOKEN       Your Hugging Face / API key.
+
+The inference script must be named `inference.py` and placed in the root directory of the project
+
+Participants must use OpenAI Client for all LLM calls using above variables
+
+Infra Restrictions
+
+Runtime of inference script should be less than 20min 
+
+Make sure your env and inference can run on a machine with vcpu=2, memory=8gb
+
+"""
+Inference Script Example
+===================================
+MANDATORY
+- Before submitting, ensure the following variables are defined in your environment configuration:
+    API_BASE_URL   The API endpoint for the LLM.
+    MODEL_NAME     The model identifier to use for inference.
+    HF_TOKEN       Your Hugging Face / API key.
+    
+- The inference script must be named `inference.py` and placed in the root directory of the project
+- Participants must use OpenAI Client for all LLM calls using above variables
+"""
+
+import os
+import re
+import base64
+import textwrap
+from io import BytesIO
+from typing import List, Optional, Dict
+
+from openai import OpenAI
+import numpy as np
+from PIL import Image
+
+from browsergym_env import BrowserGymAction, BrowserGymEnv
+
+API_BASE_URL = os.getenv("API_BASE_URL") // "https://router.huggingface.co/v1"
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME")
+MAX_STEPS = 8
+MAX_DOM_CHARS = 3500
+TEMPERATURE = 0.2
+MAX_TOKENS = 200
+FALLBACK_ACTION = "noop()"
+
+DEBUG = True
+ACTION_PREFIX_RE = re.compile(
+    r"^(action|next action)\s*[:\-]\s*",
+    re.IGNORECASE,
+)
+ACTION_PATTERN = re.compile(r"[A-Za-z_]+\s*\(.*\)", re.DOTALL)
+
+
+SYSTEM_PROMPT = textwrap.dedent(
+    """
+    You control a web browser through BrowserGym.
+    Reply with exactly one action string.
+    The action must be a valid BrowserGym command such as:
+    - noop()
+    - click('<BID>')
+    - type('selector', 'text to enter')
+    - fill('selector', 'text to enter')
+    - send_keys('Enter')
+    - scroll('down')
+    Use single quotes around string arguments.
+    When clicking, use the BrowserGym element IDs (BIDs) listed in the user message.
+    If you are unsure, respond with noop().
+    Do not include explanations or additional text.
+    """
+).strip()
+
+
+def build_history_lines(history: List[str]) -> str:
+    if not history:
+        return "None"
+    return "\n".join(history[-4:])
+
+
+def extract_screenshot_uri(observation) -> Optional[str]:
+    if observation.screenshot is None:
+        return None
+    screen_array = np.array(observation.screenshot, dtype=np.uint8)
+    image = Image.fromarray(screen_array)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    data_uri = base64.b64encode(buffer.read()).decode("utf-8")
+    return f"data:image/png;base64,{data_uri}"
+
+
+def extract_clickable_elements(observation) -> List[Dict[str, str]]:
+    """Collect BrowserGym element IDs that can be clicked."""
+
+    metadata = getattr(observation, "metadata", {}) or {}
+    obs_dict = metadata.get("browsergym_obs", {}) or {}
+    extra_props = obs_dict.get("extra_element_properties", {}) or {}
+
+    clickables: List[Dict[str, str]] = []
+    for bid, props in extra_props.items():
+        if not props.get("clickable"):
+            continue
+
+        bbox = props.get("bbox") or []
+        bbox_str = ", ".join(bbox) if bbox else "?"
+        clickables.append(
+            {
+                "bid": str(bid),
+                "bbox": bbox_str,
+            }
+        )
+
+    # Keep a stable ordering for readability
+    clickables.sort(key=lambda item: item["bid"])
+    return clickables
+
+
+def build_user_prompt(step: int, observation, history: List[str]) -> str:
+    goal = observation.goal or "(not provided)"
+    url = observation.url or "(unknown)"
+    error_note = "Yes" if observation.last_action_error else "No"
+
+    clickables = extract_clickable_elements(observation)
+    if clickables:
+        actions_hint = "\n".join(
+            f"    - {item['bid']} (bbox: {item['bbox']})" for item in clickables
+        )
+    else:
+        actions_hint = "    (none detected)"
+
+    prompt = textwrap.dedent(
+        f"""
+        Step: {step}
+        Goal: {goal}
+        Current URL: {url}
+        Previous steps:
+        {build_history_lines(history)}
+        Last action error: {error_note}
+        Available clickable element IDs: {actions_hint}
+        Reply with exactly one BrowserGym action string.
+        """
+    ).strip()
+    return prompt
+
+
+def parse_model_action(response_text: str) -> str:
+    if not response_text:
+        return FALLBACK_ACTION
+
+    # Prefer the first line that looks like an action string
+    lines = response_text.splitlines()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = ACTION_PREFIX_RE.sub("", line)
+        match = ACTION_PATTERN.search(line)
+        if match:
+            action = match.group(0).strip()
+            # Collapse internal whitespace
+            action = re.sub(r"\s+", " ", action)
+            # If the model tried to click by natural-language description while we
+            # only exposed numeric BrowserGym IDs, fallback to the single detected ID.
+            return action
+
+    # Fall back to searching the whole response
+    match = ACTION_PATTERN.search(response_text)
+    if match:
+        action = match.group(0).strip()
+        action = re.sub(r"\s+", " ", action)
+        return action
+
+    return FALLBACK_ACTION
+
+
+def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
+    env = BrowserGymEnv.from_docker_image(
+        image="browsergym-env:latest",
+        env_vars={
+            "BROWSERGYM_BENCHMARK": "miniwob",
+            "BROWSERGYM_TASK_NAME": "click-test",
+        },
+    )
+
+    history: List[str] = []
+
+    try:
+        result = env.reset()
+        observation = result.observation
+        print(f"Episode goal: {observation.goal}")
+
+        for step in range(1, MAX_STEPS + 1):
+            if result.done:
+                print("Environment signalled done. Stopping early.")
+                break
+
+            user_prompt = build_user_prompt(step, observation, history)
+            user_content = [{"type": "text", "text": user_prompt}]
+            screenshot_uri = extract_screenshot_uri(observation)
+            if screenshot_uri:
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": screenshot_uri},
+                    }
+                )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+                },
+                {
+                    "role": "user",
+                    "content": user_content,
+                },
+            ]
+
+            try:
+                completion = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS,
+                    stream=False,
+                )
+                response_text = completion.choices[0].message.content or ""
+            # pylint: disable=broad-except
+            except Exception as exc:  # noqa: BLE001
+                failure_msg = f"Model request failed ({exc}). Using fallback action."
+                print(failure_msg)
+                response_text = FALLBACK_ACTION
+
+            action_str = parse_model_action(response_text)
+            print(f"Step {step}: model suggested -> {action_str}")
+
+            result = env.step(BrowserGymAction(action_str=action_str))
+            observation = result.observation
+
+            reward = result.reward or 0.0
+            error_flag = " ERROR" if observation.last_action_error else ""
+            history_line = (
+                f"Step {step}: {action_str} -> reward {reward:+.2f}{error_flag}"
+            )
+            history.append(history_line)
+            print(
+                "  Reward: "
+                f"{reward:+.2f} | Done: {result.done} | Last action error: "
+                f"{observation.last_action_error}"
+            )
+
+            if result.done:
+                print("Episode complete.")
+                break
+
+        else:
+            print(f"Reached max steps ({MAX_STEPS}).")
+
+    finally:
+        env.close()
+
+
+if __name__ == "__main__":
+    main()You are a senior AI systems engineer specializing in reinforcement learning environments, OpenEnv specification, and agent evaluation systems.
+
+Your goal is to design a COMPLETE, HIGH-SCORING OpenEnv environment that can win a competitive evaluation judged on:
+- Real-world utility (30%)
+- Task & grader quality (25%)
+- Environment design (20%)
+- Code quality & spec compliance (15%)
+- Creativity & novelty (10%)
+
+Do NOT repeat the problem statement. Focus on execution.
+
+-----------------------------------
+PHASE 1: DOMAIN SELECTION (CRITICAL)
+-----------------------------------
+Propose 3–5 high-impact REAL-WORLD environment ideas (NOT games), such as:
+- workflows humans actually perform
+- economically or socially valuable tasks
+- domains where AI agents are currently weak
+
+For each idea:
+- Explain why it scores HIGH in real-world utility (not generic reasoning)
+- Evaluate feasibility under constraints (2 vCPU, 8GB RAM, <20 min runtime)
+- Mention what makes it NOVEL (important for 10% creativity score)
+- Identify risks (e.g., grader ambiguity, simulation complexity)
+
+Then SELECT the BEST idea with justification.
+
+-----------------------------------
+PHASE 2: SYSTEM DESIGN (CORE)
+-----------------------------------
+Design the full OpenEnv environment architecture:
+
+1. State Design
+- What is the internal state?
+- How is it represented (structured objects, DB, memory)?
+- How does state evolve across steps?
+
+2. Observation Space
+- Exact fields (typed, Pydantic-style)
+- What the agent sees vs hidden state
+- Avoid unnecessary noise
+
+3. Action Space
+- Define ALL allowed actions
+- Must be realistic and constrained (not infinite freedom)
+- Format of actions (structured or string-based)
+
+4. Step Function Logic
+- How actions modify state
+- Error handling (invalid actions, edge cases)
+- Episode termination conditions
+
+5. Reset Logic
+- How initial state is generated
+- How randomness is controlled for reproducibility
+
+6. State() API
+- What full state returns vs observation
+
+-----------------------------------
+PHASE 3: TASK DESIGN (VERY IMPORTANT)
+-----------------------------------
+Create at least 3 tasks:
+- Easy
+- Medium
+- Hard
+
+For EACH task:
+- Define clear objective
+- Define initial state
+- Define constraints
+- Explain why difficulty level is appropriate
+
+-----------------------------------
+PHASE 4: GRADER DESIGN (CRITICAL FOR SCORE)
+-----------------------------------
+For EACH task:
+
+- Define a deterministic grading function → score between 0.0–1.0
+- Must NOT be binary only
+- Must reward partial progress
+
+Include:
+- Exact scoring formula
+- Edge case handling
+- Examples of:
+  - perfect score
+  - partial score
+  - failure
+
+Ensure:
+- No randomness
+- No exploitable loopholes
+
+-----------------------------------
+PHASE 5: REWARD FUNCTION DESIGN
+-----------------------------------
+Design step-wise reward shaping:
+
+- Immediate rewards for progress
+- Penalties for:
+  - loops
+  - destructive actions
+  - inefficiency
+
+Explain:
+- Why reward helps learning
+- How it aligns with final grader
+
+-----------------------------------
+PHASE 6: BASELINE AGENT DESIGN
+-----------------------------------
+Design inference.py logic:
+
+- How the agent interprets observations
+- Prompting strategy
+- Action generation constraints
+- Handling failures
+
+Ensure:
+- Deterministic outputs
+- Reproducibility
+- Works under token + time limits
+
+-----------------------------------
+PHASE 7: INFRA + DEPLOYMENT
+-----------------------------------
+Design:
+
+1. Folder structure
+2. Dockerfile (lightweight, fast startup)
+3. openenv.yaml structure
+4. Hugging Face Space setup
+
+Ensure:
+- Passes openenv validate
+- Works with docker build/run
+- Handles API_BASE_URL, MODEL_NAME, HF_TOKEN
+
+-----------------------------------
+PHASE 8: WINNING STRATEGY (MOST IMPORTANT)
+-----------------------------------
+Explain how this solution maximizes score:
+
+- Why it will rank high in EACH evaluation category
+- What competitors will likely do wrong
+- How this design avoids disqualification
+
+-----------------------------------
+OUTPUT FORMAT
+-----------------------------------
+Give a clean, structured, implementation-ready blueprint.
+
+Avoid fluff. Think like a system designer, not a student.Selected domain: Retail Inventory & Pricing Management. This domain has high real-world impact (major retailers use AI for inventory/pricing
+) and maps well to a tractable simulation. It avoids overly-simplistic “toy” tasks and yields rich tradeoffs (profit vs stockouts). It also aligns with agentic trends: the literature notes agents already orchestrate inventory restocks and pricing decisions
+. Under 2 vCPU/8 GB, we can model a small store (e.g. 2–5 products, daily time steps) efficiently. This domain is novel in OpenEnv contests (we found no direct analog in existing environments) and covers multi-step planning. Main risk is designing a robust grader and realistic demand model, which we will address in Tasks and Grader phases.
+
+Phase 2: System Design
+1. State Design
+We model a simplified retail store across discrete “day” steps. The internal state includes:
+
+Inventory levels: an array/dict of counts for each product.
+Cash balance: current store money.
+Product data: constant lists of base prices, order costs, holding costs.
+Pending orders: shipments en route (if lead times used).
+Demand generator state: hidden pattern parameters (e.g. daily mean demand per product).
+Day counter: current day/time index.
+Representation: A Python class (Pydantic) RetailInventoryState with fields like inventory: Dict[str,int], cash: float, day: int, etc. The state evolves as: on each step, demand is drawn (random or pattern), inventory is decremented by sales, cash is updated from sales and costs, pending orders arrive (increase inventory), and day increments.
+
+2. Observation Space
+We expose only partial, task-relevant information. The observation includes:
+
+inventory: Dict[str,int] – current stock for each product.
+cash: float – current cash/budget.
+day: int – current time step.
+sales_history: Dict[str,int] – last-day sales of each product (or demand forecast).
+price: Dict[str,float] – current selling price for each product (if agent can adjust prices).
+(Optional) pending_orders: Dict[str,int] – outstanding delivery (only if we want agent to consider lead times).
+Hidden in state (not in obs): true demand distribution, hidden exceptions (stockouts, unsatisfied demand). We avoid spurious noise: only relevant features are given. For example, no raw random seed or unnecessary logs. All fields are typed (using Pydantic models or Python dataclasses).
+
+3. Action Space
+We define a small set of structured actions that mirror real decisions:
+
+Order(product: str, quantity: int): Place an order for more units of a product. This is realistic (like restocking). Quantity is bounded (no negative, max reasonable).
+SetPrice(product: str, new_price: float): Adjust the selling price of a product. Realistic (sales/promotions).
+NoOp(): Do nothing (if agent chooses no change).
+Actions are represented as JSON or Pydantic classes (e.g. an Action Union). For example: {"action": "order", "product": "Widget", "quantity": 10}. We constrain values: e.g., cannot order more than some max or when cash insufficient. The action space is discrete with parameters, not infinite text. This ensures realistic constraints and easier parsing. (Alternatively, free-text commands could be used, but structured JSON is more robust under LLM output and spec compliance.)
+
+4. Step Function Logic
+Each step(action) does:
+
+Validate action: If invalid (e.g. ordering negative quantity, unknown product), return error or zero reward with penalty. (Environment should handle gracefully: e.g. ignore invalid action and penalize small negative reward to discourage random outputs.)
+Process action:
+If Order: subtract order cost (unit_cost*quantity) from cash (or set up pending order if lead time >0).
+If SetPrice: update product's selling price (must stay above cost).
+If NoOp: do nothing.
+Simulate demand: Sample random demand for each product (e.g. Poisson or uniform) based on current pattern. Compute sales = min(demand, inventory).
+Update inventory & cash: For each product, inventory -= sales. Add revenue sales * price to cash.
+Apply costs/penalties: Deduct holding cost (e.g. small cost per unit left) to penalize overstock. Optionally penalize missed sales (stockout), e.g. reward+0 but track lost opportunity.
+Check termination: End episode if day ≥ horizon (e.g. 30 days) or if cash goes below zero. Set done=True.
+Increment day: day += 1.
+Generate observation and reward: Return new observation (per design) and computed step reward (see Phase 5 for shaping).
+No randomness beyond demand sampling. (Random seed fixed on reset ensures reproducibility.) The environment loops until done.
+
+5. Reset Logic
+reset() initializes a new episode:
+
+Set day=0, cash = initial budget (e.g. $1000), initial inventory (random or fixed small stock), default prices (e.g. cost+markup).
+Initialize demand pattern (random seed-driven; e.g. demand mean for each product drawn from a range). This hidden pattern is consistent per episode.
+Ensure randomness is seeded for reproducibility (np.random.seed(env_seed)).
+Return initial observation.
+Different tasks will start with different initial states (see Tasks below), but all use a deterministic reset seeded by the task parameters or fixed seed.
+
+6. State() API
+The state() method returns the full internal state object (all fields, including hidden data) for evaluation or debugging. The observation (via step return) is a subset (inventory, cash, day, etc). This separation ensures the agent only sees observation fields, not hidden pattern or full demand history.
+
+Phase 3: Task Design
+We propose three graded tasks (Easy, Medium, Hard) that vary in complexity:
+
+Easy Task – Single Product Steady Demand.
+Objective: Maximize profit for a store selling one product over 7 days.
+Initial State: 1 product with cost $5, initial stock 10 units, price $10. Cash = $100. Daily demand fixed at 2 units (known/constant). No lead time for orders.
+Constraints: Inventory capacity unlimited. Agent can only order in multiples of 1 and set price once per day.
+Difficulty: Very simple scenario. Optimal strategy is to meet demand exactly each day. This tests basic ordering logic and profitability.
+
+Medium Task – Two Products, Variable Demand.
+Objective: Manage two products (A and B) over 14 days to maximize cumulative profit.
+Initial State: Two products with different costs/prices (e.g. A: cost $5, price $10; B: cost $3, price $6). Initial inventory moderate (e.g. 5 of each). Cash = $200. Demand is random: daily demand for A∈[0,4], for B∈[0,3] (unknown but stationary). Lead time 1 day for orders.
+Constraints: Inventory capacity per product ≤10 units. Ordering incurs flat shipping fee (e.g. $2 per order placed).
+Difficulty: More complex: agent must balance order costs vs stockouts. Pricing might need adjustment for profitability. The stochastic demand requires adaptive policy.
+
+Hard Task – Multi-product, Time-varying Demand & Pricing.
+Objective: Over 30 days, manage 3 products (C, D, E) with changing demand patterns and dynamic pricing.
+Initial State: Three products with distinct costs and initial prices. Initial stock 3 units each, cash = $300. Demand has a trend: e.g. product C demand spikes mid-episode, others decline. Demand is random (Poisson around time-varying means).
+Constraints: Inventory capacity small (≤6 per product), and pricing must stay between cost+10% and cost+100%.
+Difficulty: High: agent must detect trends and adapt orders/prices. Balancing three products with shifting demand tests planning and partial knowledge.
+
+For each task, difficulty scales via number of products, horizon length, and demand uncertainty. Easy tasks allow a straightforward solution, while Hard requires nuanced strategy.
+
+Phase 4: Grader Design
+For each task we define a deterministic score ∈[0,1]:
+
+Grader Metrics: We use normalized profit as the score. Let Profit = final_cash + value_of_inventory - initial_cash (i.e. money earned minus spend). We precompute a high-probability target profit (e.g. through simulation of a strong heuristic or known optimum). Score = min(max(Profit / TargetProfit, 0.0), 1.0). This yields 0 for losses, 1 for meeting/exceeding target, and intermediate for partial success.
+
+Task-by-task:
+
+Easy Task: Suppose optimal profit = $70. Score = Profit/70.
+Perfect: Agent sells all 14 units, Profit=$70 → score 1.0.
+Partial: sells 7 units, Profit=$35 → score 0.5.
+Failure: misses all demand, Profit<0 → score 0.0 (clamped).
+Medium Task: Compute optimal (e.g. $150). Score = Profit/150. Example: profit $120 → 0.8; profit $0 → 0.0.
+Hard Task: Target profit e.g. $300. Score = Profit/300. Partial progress yields 0<x<1.
+Edge Cases: If Profit < 0, we set score = 0.0. If Profit > Target, we clamp to 1.0 (no reward for overshooting, to avoid exploit). No randomness in grading: the formula is fixed. Even if demand random, scoring is deterministic for a given outcome.
+
+No binary grading: We give fractional credit. E.g., selling 50% of potential sales yields ~0.5 score. This rewards partial solutions.
+
+This ensures non-binary, continuous evaluation. There are no hidden randomness or ambiguous rules. It directly measures business success (profit) as a single metric.
+
+Phase 5: Reward Function Design
+We provide dense step-wise rewards aligned with profit:
+
+Revenue reward: Each step, reward = (today’s sales revenue) − (order cost) − (holding cost). This aligns immediate reward with profit contributions.
+
+Penalties:
+
+Stockout Penalty: If demand > inventory, optionally a small penalty (or foregone reward) to discourage stockouts (e.g. lost sale opportunity).
+Inventory Holding: We subtract a small cost per unit left (e.g. 0.1 per unit/day) to penalize overstock and encourage lean operations.
+Invalid actions: Slight negative reward for invalid/illegal actions.
+Efficiency: If episode ends early or overshoots, a final bonus/penalty could be applied (e.g. leftover stock has no value).
+Alignment: These rewards push the agent to make profitable decisions each day (sell products and manage costs), which directly correlates with the final profit used in grading. Immediate revenue motivates sales; order costs and holding costs discourage wasteful over-ordering. Over multiple steps, maximizing cumulative reward is equivalent to maximizing profit.
+
+Thus, reward shaping provides intermediate feedback that is consistent with the final score (profit). It also penalizes undesirable behaviors (inefficiency, loops, invalid actions), guiding learning even if final success is not immediate.
+
+Phase 6: Baseline Agent Design (inference.py)
+The baseline inference.py will follow these guidelines:
+
+Observation parsing: The agent receives the JSON observation (inventory, cash, day, prices). It summarizes recent sales perhaps from sales_history. The system prompt will describe the task (e.g. “You manage store inventory to maximize profit…”).
+
+Prompting Strategy:
+
+Use a deterministic system prompt (templates with environment description, valid actions).
+Include a few example turns if needed (like ordering when low stock).
+Emphasize output format: “Respond with exactly one action in JSON {action:...,product:...,quantity:...} or {action: 'set_price',...}.”
+Possibly list valid products and their names in the prompt.
+Action generation: The agent uses the OpenAI client with api_base_url, model_name, etc., as mandated. It calls client.completions.create with temperature=0.0 for determinism and low max_tokens (e.g. 50). The stop sequence ensures only the action JSON is output (we can trim any extra text).
+
+Constraints: The prompt will include current cash and inventory so the model “knows” not to overspend. We may instruct it “Don’t order more than cash allows” or we check after generation.
+
+Failure handling: If the LLM outputs invalid JSON or illegal action, the agent will default to NoOp() (the fallback). This ensures robustness.
+
+Determinism & Limits: Temperature 0, no randomness. Care to fit under time/token budget (observations are small). The code uses OPENAI client as specified. No external calls beyond OpenAI. It uses API_BASE_URL, MODEL_NAME, HF_TOKEN from env variables.
+
+Phase 7: Infrastructure & Deployment
+Folder Structure:
+
+graphql
+Copy
+retail_inventory_env/
+├── README.md
+├── openenv.yaml
+├── pyproject.toml         # env dependencies
+├── environment/
+│   ├── __init__.py
+│   ├── retail_env.py      # implements Environment subclass
+│   └── models.py          # Pydantic Action/Observation/State models
+├── server/
+│   ├── app.py             # FastAPI app loading the environment
+│   └── Dockerfile         # container build
+└── inference.py           # baseline agent script
+Dockerfile: Lightweight (e.g. Python 3.10-slim). Example steps:
+
+sql
+Copy
+FROM python:3.10-slim
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e .
+# If using uvicorn for OpenEnv server:
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+This builds fast and installs only necessary deps. We ensure the container is minimal (no heavy libs besides FastAPI).
+
+openenv.yaml: Manifest specifying environment metadata:
+
+yaml
+Copy
+name: "RetailInventoryEnv"
+description: "Simulates store inventory management and pricing tasks."
+version: "0.1.0"
+author: "YourTeamName"
+variables:
+  - API_BASE_URL
+  - MODEL_NAME
+  - HF_TOKEN
+requirements:
+  - python >=3.10
+  - fastapi
+  - pydantic
+Key fields: name, version, author, required env variables (as mandated). The openenv validate tool will check this.
+
+Hugging Face Space Setup: We create a Space with environment code (pointing to this repo). The openenv push command packages this structure. The Space Dockerfile (via uvicorn) is set to serve the environment endpoint. We ensure the Space README gives instructions to connect via RetailInventoryEnv. The inference script should be runnable locally using provided API_BASE_URL.
+
+All components are spec-compliant: pyproject.toml lists dependencies, openenv.yaml is valid, and server/app.py creates the FastAPI app (following templates). On docker build && docker run, the environment server starts without errors. We will test with openenv validate and sample client.reset() in CI.
+
+Phase 8: Winning Strategy
+This design maximizes the scoring criteria:
+
+Real-world utility (30%): We chose a high-impact domain. Retail inventory and pricing are critical in commerce
+. Solving this helps businesses reduce waste and increase profit. The scenario is more compelling than toy puzzles. Citing real industry usage
+ shows practicality.
+
+Task & grader quality (25%): We provide three graded tasks of increasing complexity, with clear objectives and constraints. The grader is fully deterministic and continuous (profit-based), rewarding partial progress. Unlike binary or hackable metrics, our profit formula is transparent and robust to tie-breaking. Example scoring demonstrates non-trivial partial credit, satisfying the requirement for non-binary grading.
+
+Environment design (20%): We offer a complete, well-structured environment architecture: formal state, observation, and action specs with Pydantic models. The step/reset logic and API design are clearly defined. This thoroughness avoids ambiguities and meets OpenEnv best practices. For instance, the separation of observed vs hidden state ensures the challenge remains non-trivial.
+
+Code quality & spec compliance (15%): The plan includes a proper folder layout, pyproject.toml, a lean Dockerfile, and an openenv.yaml manifest. These choices ensure passing openenv validate and quick container startup. Using lightweight base images and minimal dependencies keeps the environment within resource limits. The inference script will follow the official OpenAI client usage (using API_BASE_URL, HF_TOKEN, etc.) with fixed seeds for reproducibility.
+
+Creativity & novelty (10%): This environment is creative: it models a dynamic store that an agent must run, which is more novel than many hackathon entries (e.g. not just calendar or coding). Combining inventory decisions with pricing and multi-day demand is inventive. We also included features like lead time and holding costs, adding realism. Compared to a “to-do list” or text puzzle, this truly simulates a small business.
+
+Why competitors might fall short: Many may choose simpler or game-like domains (email sorting, to-dos, trivia), which earn low “real-world utility” points. Others might implement binary success tasks (score 0/1), which fail the grader criterion. By contrast, our design explicitly rewards nuance (partial profit) and scale (multiple products and days). Competitors might also neglect spec compliance (broken openenv.yaml or slow Docker), whereas we emphasize clean CI/CD integration.
+
+Avoiding disqualification: We adhere to all requirements:
+
+Use of environment variables (API_BASE_URL, MODEL_NAME, HF_TOKEN).
+All model calls use the OpenAI client (not raw requests).
+The inference script is deterministic (temperature=0).
+The environment is reproducible (seeded randomness).
+Everything runs within resource/time limits (no heavy ML model, just simple math loops).
+openenv.yaml and Docker setup ensure smooth deployment.
+In summary, this blueprint delivers a complete, polished environment with high real-world relevance, robust tasks and grading, and solid engineering practices. It addresses each rubric category directly and avoids common pitfalls, positioning it as a top-scoring solution.
