@@ -31,3 +31,7 @@ endpoints:
   - GET /tasks
   - POST /evaluate
   - GET /health
+  - POST /live/start
+  - POST /live/stop
+  - GET /live/status
+  - GET /live/latest

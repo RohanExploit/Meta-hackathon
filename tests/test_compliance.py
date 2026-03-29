@@ -64,6 +64,10 @@ def test_openenv_yaml_contract():
         "GET /tasks",
         "POST /evaluate",
         "GET /health",
+        "POST /live/start",
+        "POST /live/stop",
+        "GET /live/status",
+        "GET /live/latest",
     }
     assert required_endpoints.issubset(endpoints)
 

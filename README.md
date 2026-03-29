@@ -181,6 +181,27 @@ curl -X POST http://localhost:8000/step \
 curl http://localhost:8000/tasks
 ```
 
+### Realtime loop (server-side)
+
+Start realtime execution loop:
+```bash
+curl -X POST http://localhost:8000/live/start \
+  -H "Content-Type: application/json" \
+  -d '{"task_name":"easy","mode":"heuristic","interval_ms":600}'
+```
+
+Poll latest realtime tick:
+```bash
+curl http://localhost:8000/live/latest
+```
+
+Stop realtime loop:
+```bash
+curl -X POST http://localhost:8000/live/stop \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual_stop"}'
+```
+
 ### Evaluate episode
 ```bash
 curl -X POST http://localhost:8000/evaluate \
@@ -281,7 +302,20 @@ set PRECHECK_SKIP_DOCKER=1
 
 # Skip OpenEnv CLI check (if openenv CLI not installed)
 set PRECHECK_SKIP_OPENENV=1
+
+# Skip nested health check (useful if calling from health_check.py/CI)
+set PRECHECK_SKIP_HEALTH=1
 ```
+
+### Inference reproducibility benchmark
+
+Run inference twice and compare runtime/mean-score consistency:
+
+```bash
+python scripts/benchmark_inference.py
+```
+
+This writes logs to `inference_run_1.log` and `inference_run_2.log`.
 
 ### CI
 

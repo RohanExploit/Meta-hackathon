@@ -450,6 +450,25 @@
         <input id="cmdInput" type="text" placeholder="Type /reset easy 42, /step order Widget 2, /run, /ping">
         <button id="cmdBtn">Exec</button>
       </div>
+      <div class="body" style="border-top:1px solid var(--line); padding-top:10px;">
+        <div class="row2">
+          <button id="liveStartBtn">Realtime Start</button>
+          <button id="liveStopBtn">Realtime Stop</button>
+        </div>
+        <div class="row2" style="margin-top:8px;">
+          <div>
+            <label class="tiny">Live Mode</label>
+            <select id="liveModeSelect">
+              <option value="heuristic">heuristic</option>
+              <option value="noop">noop</option>
+            </select>
+          </div>
+          <div>
+            <label class="tiny">Interval (ms)</label>
+            <input id="liveIntervalInput" type="number" value="600" min="100" step="50">
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -755,6 +774,16 @@
           await doAutoRun();
           return;
         }
+        if (op === "/live_start") {
+          const mode = parts[1] || "heuristic";
+          const interval = parts[2] ? Number(parts[2]) : Number($("liveIntervalInput").value || 600);
+          await startRealtime(mode, interval);
+          return;
+        }
+        if (op === "/live_stop") {
+          await stopRealtime("cmd_stop");
+          return;
+        }
         if (op === "/step") {
           if (parts.length < 2) {
             line("CMD ERR: usage /step noop|order|set_price ...", "bad");
@@ -819,6 +848,66 @@
       try { await doAutoRun(); } catch (e) { line(`RUN FAILED ${e.message}`, "bad"); }
     });
 
+    async function startRealtime(mode = null, interval = null) {
+      try {
+        const payload = {
+          task_name: $("taskSelect").value,
+          mode: mode || $("liveModeSelect").value,
+          interval_ms: Number(interval || $("liveIntervalInput").value || 600),
+        };
+        const seedRaw = $("seedInput").value.trim();
+        if (seedRaw.length) payload.seed = Number(seedRaw);
+        const out = await api("/live/start", "POST", payload);
+        line(`LIVE START mode=${payload.mode} interval=${payload.interval_ms}ms`, "ok");
+        return out;
+      } catch (e) {
+        line(`LIVE START FAILED ${e.message}`, "bad");
+      }
+      return null;
+    }
+
+    async function stopRealtime(reason = "ui_stop") {
+      try {
+        const out = await api("/live/stop", "POST", { reason });
+        line(`LIVE STOP reason=${reason}`, "warn");
+        return out;
+      } catch (e) {
+        line(`LIVE STOP FAILED ${e.message}`, "bad");
+      }
+      return null;
+    }
+
+    async function pollRealtimeLatest() {
+      try {
+        const status = await api("/live/status", "GET");
+        if (!status.running && !status.done) return;
+
+        const latest = await api("/live/latest", "GET");
+        if (latest && latest.observation) {
+          state.observation = latest.observation;
+          state.done = !!latest.done;
+          state.reward = Number(latest.reward || 0);
+          renderInfo(latest.info || {});
+          if (latest.tick) {
+            line(`LIVE TICK ${latest.tick} reward=${state.reward.toFixed(3)} done=${state.done}`, "act");
+          }
+        }
+
+        if (status.error) {
+          line(`LIVE ERROR ${status.error}`, "bad");
+        }
+      } catch (e) {
+        line(`LIVE POLL FAILED ${e.message}`, "bad");
+      }
+    }
+
+    $("liveStartBtn").addEventListener("click", async () => {
+      await startRealtime();
+    });
+    $("liveStopBtn").addEventListener("click", async () => {
+      await stopRealtime();
+    });
+
     $("cmdBtn").addEventListener("click", async () => {
       const input = $("cmdInput");
       const raw = input.value;
@@ -859,6 +948,10 @@
         line(`TASK LOAD ERROR ${e.message}`, "warn");
       }
     })();
+
+    setInterval(() => {
+      pollRealtimeLatest();
+    }, 750);
   </script>
 </body>
 </html>

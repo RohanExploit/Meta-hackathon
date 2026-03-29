@@ -31,6 +31,7 @@ jobs:
           API_BASE_URL: https://router.huggingface.co/v1
           MODEL_NAME: ci-placeholder-model
           HF_TOKEN: ci-placeholder-token
+          PRECHECK_SKIP_HEALTH: "1"
           PRECHECK_SKIP_DOCKER: "1"
           PRECHECK_SKIP_OPENENV: "1"
         run: python scripts/pre_submission_check.py

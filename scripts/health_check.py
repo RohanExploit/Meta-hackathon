@@ -53,6 +53,19 @@ def main() -> int:
 
     _run("Run environment smoke script", [python, "test_env.py"])
     _run("Run API smoke script", [python, "test_api.py"])
+    _run(
+        "Run pre-submission checks (skip Docker/OpenEnv CLI)",
+        [python, "scripts/pre_submission_check.py"],
+        env={
+            **env,
+            "API_BASE_URL": env.get("API_BASE_URL", "https://router.huggingface.co/v1"),
+            "MODEL_NAME": env.get("MODEL_NAME", "health-check-placeholder"),
+            "HF_TOKEN": env.get("HF_TOKEN", "health-check-placeholder"),
+            "PRECHECK_SKIP_HEALTH": "1",
+            "PRECHECK_SKIP_DOCKER": "1",
+            "PRECHECK_SKIP_OPENENV": "1",
+        },
+    )
 
     print("\n[health] All checks passed.")
     return 0

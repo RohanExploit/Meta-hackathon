@@ -191,5 +191,28 @@ def test_observation_deterministic_given_seed():
     assert o1.recent_demand_budget == o2.recent_demand_budget
 
 
+def test_live_endpoints_basic_cycle():
+    from fastapi.testclient import TestClient
+    from server.app import app
+
+    client = TestClient(app)
+
+    start = client.post(
+        "/live/start",
+        json={"task_name": "easy", "mode": "noop", "interval_ms": 100},
+    )
+    assert start.status_code == 200
+
+    status = client.get("/live/status")
+    assert status.status_code == 200
+    assert "running" in status.json()
+
+    latest = client.get("/live/latest")
+    assert latest.status_code == 200
+
+    stop = client.post("/live/stop", json={"reason": "test"})
+    assert stop.status_code == 200
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -64,14 +64,17 @@ def _check_openenv_cli_available() -> tuple[bool, str]:
 
 
 def main() -> int:
+    skip_health = os.getenv("PRECHECK_SKIP_HEALTH", "0") == "1"
     skip_docker = os.getenv("PRECHECK_SKIP_DOCKER", "0") == "1"
     skip_openenv = os.getenv("PRECHECK_SKIP_OPENENV", "0") == "1"
 
     checks = [
-        ("Core health checks (compile+tests+smoke)", _check_health_script),
         ("At least 3 tasks are defined", _check_task_count),
         ("Inference env vars configured", _check_inference_contract),
     ]
+
+    if not skip_health:
+        checks.insert(0, ("Core health checks (compile+tests+smoke)", _check_health_script))
 
     if not skip_docker:
         checks.append(("Docker CLI available", _check_docker_available))

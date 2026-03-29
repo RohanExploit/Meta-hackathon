@@ -1,6 +1,8 @@
 """FastAPI server for multi-channel retail environment."""
 import os
 from pathlib import Path
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import uvicorn
@@ -49,6 +51,17 @@ class EvaluateRequest(BaseModel):
     variance_penalty: float = 0.0
 
 
+class LiveStartRequest(BaseModel):
+    task_name: Optional[str] = None
+    seed: Optional[int] = None
+    mode: str = "heuristic"  # heuristic | noop
+    interval_ms: int = 600
+
+
+class LiveStopRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 def _parse_action(payload: Dict[str, Any]) -> RetailAction:
     """Parse action from JSON payload."""
     if not isinstance(payload, dict):
@@ -86,17 +99,137 @@ def _resolve_task_config(request: ResetRequest) -> Dict[str, Any]:
     raise ValueError("Either task_config or task_name must be provided")
 
 
+env_lock = threading.Lock()
+
+
+class LiveRunner:
+    """Realtime step runner for continuous wall-clock execution."""
+
+    def __init__(self) -> None:
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._mode = "heuristic"
+        self._interval_s = 0.6
+        self._tick = 0
+        self._latest: Dict[str, Any] = {
+            "tick": 0,
+            "running": False,
+            "done": False,
+            "reward": 0.0,
+            "observation": None,
+            "info": {},
+            "timestamp": 0.0,
+            "error": None,
+        }
+        self._status_lock = threading.Lock()
+
+    def _heuristic_action(self, observation: Any) -> Dict[str, Any]:
+        products = list(observation.inventory.keys())
+        if not products:
+            return {"action": "noop"}
+
+        target = min(products, key=lambda p: int(observation.inventory.get(p, 0)))
+        min_inv = int(observation.inventory.get(target, 0))
+        if min_inv <= 2:
+            return {"action": "order", "product": target, "quantity": 3}
+
+        if getattr(observation, "disruption_active", False) and float(observation.cash) > 20.0:
+            return {"action": "promote", "product": target, "budget_allocated": 8.0}
+
+        return {"action": "noop"}
+
+    def _run_loop(self) -> None:
+        while self._running:
+            try:
+                with env_lock:
+                    if env.state is None:
+                        self._set_latest(error="Environment not initialized. Use /live/start with task_name.")
+                        time.sleep(self._interval_s)
+                        continue
+
+                    obs = env._get_observation()
+                    if self._mode == "noop":
+                        action_payload = {"action": "noop"}
+                    else:
+                        action_payload = self._heuristic_action(obs)
+
+                    action = _parse_action(action_payload)
+                    observation, reward, done, info = env.step(action)
+
+                self._tick += 1
+                self._set_latest(
+                    tick=self._tick,
+                    running=True,
+                    done=bool(done),
+                    reward=float(reward),
+                    observation=observation.model_dump(),
+                    info=info,
+                    timestamp=time.time(),
+                    error=None,
+                )
+
+                if done:
+                    self._running = False
+                    self._set_latest(running=False)
+                    break
+
+            except Exception as exc:
+                self._set_latest(error=str(exc), running=False)
+                self._running = False
+                break
+
+            time.sleep(self._interval_s)
+
+    def _set_latest(self, **kwargs: Any) -> None:
+        with self._status_lock:
+            self._latest.update(kwargs)
+
+    def start(self, mode: str, interval_ms: int) -> None:
+        if self._running:
+            return
+        self._mode = mode if mode in {"heuristic", "noop"} else "heuristic"
+        self._interval_s = max(0.1, float(interval_ms) / 1000.0)
+        self._running = True
+        self._set_latest(running=True, error=None)
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self, reason: Optional[str] = None) -> None:
+        self._running = False
+        self._set_latest(running=False, info={"reason": reason or "stopped"})
+
+    def status(self) -> Dict[str, Any]:
+        with self._status_lock:
+            return {
+                "running": bool(self._running),
+                "mode": self._mode,
+                "interval_ms": int(self._interval_s * 1000),
+                "tick": int(self._latest.get("tick", 0)),
+                "done": bool(self._latest.get("done", False)),
+                "timestamp": float(self._latest.get("timestamp", 0.0)),
+                "error": self._latest.get("error"),
+            }
+
+    def latest(self) -> Dict[str, Any]:
+        with self._status_lock:
+            return dict(self._latest)
+
+
+live_runner = LiveRunner()
+
+
 @app.post("/reset")
 async def reset_environment(request: ResetRequest):
     """Reset the environment."""
     try:
-        task_config = _resolve_task_config(request)
-        if request.seed is not None:
-            env.seed = int(request.seed)
-        elif "seed" in task_config:
-            env.seed = int(task_config["seed"])
+        with env_lock:
+            task_config = _resolve_task_config(request)
+            if request.seed is not None:
+                env.seed = int(request.seed)
+            elif "seed" in task_config:
+                env.seed = int(task_config["seed"])
 
-        observation = env.reset(task_config)
+            observation = env.reset(task_config)
 
         return {
             "observation": observation.model_dump(),
@@ -115,8 +248,9 @@ async def reset_environment(request: ResetRequest):
 async def step_environment(request: StepRequest):
     """Take a step in the environment."""
     try:
-        action = _parse_action(request.action)
-        observation, reward, done, info = env.step(action)
+        with env_lock:
+            action = _parse_action(request.action)
+            observation, reward, done, info = env.step(action)
 
         return {
             "observation": observation.model_dump(),
@@ -132,7 +266,8 @@ async def step_environment(request: StepRequest):
 async def get_state():
     """Get current internal state."""
     try:
-        state = env.get_state()
+        with env_lock:
+            state = env.get_state()
         return {"state": state}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -171,6 +306,50 @@ async def evaluate_episode(request: EvaluateRequest):
         raise ValueError("Either summary or summaries must be provided")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/live/start")
+async def live_start(request: LiveStartRequest):
+    """Start realtime continuous stepping."""
+    try:
+        if request.task_name:
+            with env_lock:
+                task_cfg = get_task_config(request.task_name)
+                if request.seed is not None:
+                    env.seed = int(request.seed)
+                elif "seed" in task_cfg:
+                    env.seed = int(task_cfg["seed"])
+                env.reset(task_cfg)
+
+        live_runner.start(mode=request.mode, interval_ms=int(request.interval_ms))
+        return {
+            "ok": True,
+            "status": live_runner.status(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/live/stop")
+async def live_stop(request: LiveStopRequest):
+    """Stop realtime stepping."""
+    live_runner.stop(request.reason)
+    return {
+        "ok": True,
+        "status": live_runner.status(),
+    }
+
+
+@app.get("/live/status")
+async def live_status():
+    """Get realtime runner status."""
+    return live_runner.status()
+
+
+@app.get("/live/latest")
+async def live_latest():
+    """Get latest realtime tick payload."""
+    return live_runner.latest()
 
 
 @app.get("/health")
