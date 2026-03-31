@@ -1,12 +1,30 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache/
+*.egg-info/
+
+# Virtual environments
 .venv/
 venv/
-retail_inventory_env.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking / linting
 .mypy_cache/
 .ruff_cache/
 
-*.egg-info/
+# IDE / editor
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/

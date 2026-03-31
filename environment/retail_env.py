@@ -366,18 +366,21 @@ class MultiChannelRetailEnv:
         total_revenue = 0.0
         total_demand = 0.0
         total_sales = 0.0
+        step_unmet = 0  # Track unmet demand for THIS step only
 
         for product in self.state.inventory.keys():
             # Base demand
             demand_lux = self._sample_demand(
                 self.state.base_demand_luxury[product],
                 self.state.prices_luxury[product],
+                self.state.product_costs[product],
                 self.state.demand_elasticity[product],
                 disruption_multiplier,
             )
             demand_bdg = self._sample_demand(
                 self.state.base_demand_budget[product],
                 self.state.prices_budget[product],
+                self.state.product_costs[product],
                 self.state.demand_elasticity[product],
                 disruption_multiplier,
             )
@@ -408,10 +411,11 @@ class MultiChannelRetailEnv:
             self.state.cumulative_sales_budget[product] += sales_bdg
             total_sales += sales_lux + sales_bdg
 
-            # Stockout penalty
+            # Stockout tracking
             unmet_lux = max(0, int(demand_lux) - sales_lux)
             unmet_bdg = max(0, int(demand_bdg) - sales_bdg)
             unmet = unmet_lux + unmet_bdg
+            step_unmet += unmet
 
             if unmet > 0:
                 self.episode_metrics["stockout_count"] += 1.0
@@ -425,21 +429,22 @@ class MultiChannelRetailEnv:
         self.episode_metrics["total_demand"] += total_demand
         self.episode_metrics["total_sales"] += total_sales
 
-        # Return reward signal (revenue - stockout penalty)
-        stockout_penalty = self.state.cumulative_stockouts * 2.0
+        # Return reward signal: per-step revenue minus per-step stockout penalty
+        stockout_penalty = step_unmet * 2.0
         return total_revenue - stockout_penalty
 
     def _sample_demand(
         self,
         base_demand: float,
         price: float,
+        product_cost: float,
         elasticity: float,
         disruption_multiplier: float,
     ) -> int:
         """Sample demand with price elasticity and disruptions."""
-        # Reference price is cost * 1.5
-        reference_price = 1.5  # Normalized
-        price_ratio = price / reference_price if reference_price > 0 else 1.0
+        # Reference price is the product cost * 1.5 (a "fair" markup)
+        reference_price = max(0.01, product_cost * 1.5)
+        price_ratio = price / reference_price
         price_effect = price_ratio ** (-elasticity)
         
         effective_demand = base_demand * price_effect * disruption_multiplier
