@@ -160,6 +160,9 @@ install works reliably during image builds.
 
 Deploy this repo to HF Spaces; the space will automatically serve the API.
 
+This repository includes `app.spaces.yaml` configured for Docker Spaces and
+tagged with `openenv`.
+
 ## API Examples
 
 ### Reset to a task

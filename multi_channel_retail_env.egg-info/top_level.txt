@@ -1,4 +1,0 @@
-environment
-scripts
-server
-tests

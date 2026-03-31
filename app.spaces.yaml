@@ -1,0 +1,15 @@
+title: Multi-Channel Retail Environment
+description: OpenEnv-compliant multi-channel retail simulation with disruption recovery.
+sdk: docker
+docker:
+  dockerfile: server/Dockerfile
+tags:
+  - openenv
+app_port: 8000
+env:
+  - name: API_BASE_URL
+    value: https://router.huggingface.co/v1
+  - name: MODEL_NAME
+    value: NousResearch/Nous-Hermes-2-Mistral-7B-DPO
+  - name: OPENAI_API_KEY
+    description: API key for OpenAI-compatible inference endpoints
