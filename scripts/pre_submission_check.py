@@ -48,8 +48,10 @@ def _check_task_count() -> tuple[bool, str]:
 
 
 def _check_inference_contract() -> tuple[bool, str]:
-    required = ["API_BASE_URL", "MODEL_NAME", "HF_TOKEN"]
+    required = ["API_BASE_URL", "MODEL_NAME"]
     missing = [name for name in required if not os.getenv(name)]
+    if not (os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")):
+        missing.append("OPENAI_API_KEY (or HF_TOKEN/API_KEY)")
     if missing:
         return False, f"Missing env vars for inference: {', '.join(missing)}"
     return True, "Inference env vars present"
@@ -60,7 +62,7 @@ def _check_docker_available() -> tuple[bool, str]:
 
 
 def _check_openenv_cli_available() -> tuple[bool, str]:
-    return _run_cmd(["openenv", "validate", "openenv.yaml"])
+    return _run_cmd(["openenv", "validate", "."])
 
 
 def main() -> int:
