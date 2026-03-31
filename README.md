@@ -137,12 +137,17 @@ adjusted_score = mean_score - variance_penalty × variance(seed_scores)
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Installation & Quick Start
 
-### Local Development
+### Prerequisites
+- **Python 3.10+** (if running locally)
+- **Docker** (optional, if running via containerized setup)
+- **Hugging Face Token / API Key** (to run the baseline inference agent)
+
+### Local Installation & Development
 
 ```bash
-# Clone
+# Clone the repository
 git clone https://github.com/RohanExploit/Meta-hackathon.git
 cd Meta-hackathon
 
