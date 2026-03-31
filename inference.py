@@ -11,7 +11,7 @@ from environment.tasks import TASKS
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME")
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+HF_TOKEN = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 TEMPERATURE = 0.0
 MAX_TOKENS = 300
@@ -290,7 +290,7 @@ def main() -> None:
     if not MODEL_NAME:
         raise ValueError("MODEL_NAME is required (set via environment variable)")
     if not HF_TOKEN:
-        raise ValueError("HF_TOKEN or API_KEY is required")
+        raise ValueError("OPENAI_API_KEY (or HF_TOKEN / API_KEY) is required")
 
     print("\n" + "="*60)
     print("MULTI-CHANNEL RETAIL INFERENCE")

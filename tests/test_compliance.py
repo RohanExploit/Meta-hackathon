@@ -78,7 +78,7 @@ def test_hf_spaces_config_exists_and_uses_docker():
 
     text = spaces_config.read_text(encoding="utf-8")
     assert "sdk: docker" in text
-    assert "dockerfile: server/Dockerfile" in text
+    assert "dockerfile: Dockerfile" in text
     assert "openenv" in text
 
 

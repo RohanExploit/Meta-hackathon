@@ -1,3 +1,15 @@
+---
+title: Multi-Channel Retail Environment
+emoji: 🏪
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 8000
+tags:
+  - openenv
+pinned: false
+---
+
 # Multi-Channel Retail Environment with Disruption Recovery
 
 An OpenEnv-compliant environment for training AI agents in dynamic retail management with multi-segment pricing, supply chain disruptions, and real-time adaptation.
@@ -143,13 +155,13 @@ python inference.py
 
 ```bash
 # Build
-docker build -f server/Dockerfile -t retail-env .
+docker build -t retail-env .
 
 # Run
 docker run -p 8000:8000 \
   -e API_BASE_URL="https://router.huggingface.co/v1" \
   -e MODEL_NAME="<model>" \
-  -e HF_TOKEN="<token>" \
+  -e OPENAI_API_KEY="<token>" \
   retail-env
 ```
 
@@ -264,7 +276,7 @@ python -m py_compile environment/*.py server/app.py inference.py
 python -m pytest tests/ -v
 
 # Build Docker
-docker build -f server/Dockerfile -t retail-env .
+docker build -t retail-env .
 
 # Validate openenv.yaml
 # (Requires openenv CLI tool)
