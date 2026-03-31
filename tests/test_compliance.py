@@ -51,7 +51,7 @@ def test_openenv_yaml_contract():
     assert "author:" in text
 
     variables = _extract_list_block(text, "variables")
-    assert {"API_BASE_URL", "MODEL_NAME", "HF_TOKEN"}.issubset(variables)
+    assert {"API_BASE_URL", "MODEL_NAME", "OPENAI_API_KEY", "HF_TOKEN"}.issubset(variables)
 
     tasks = _extract_list_block(text, "tasks")
     assert len(tasks) >= 3
@@ -70,6 +70,16 @@ def test_openenv_yaml_contract():
         "GET /live/latest",
     }
     assert required_endpoints.issubset(endpoints)
+
+
+def test_hf_spaces_config_exists_and_uses_docker():
+    spaces_config = ROOT / "app.spaces.yaml"
+    assert spaces_config.exists()
+
+    text = spaces_config.read_text(encoding="utf-8")
+    assert "sdk: docker" in text
+    assert "dockerfile: server/Dockerfile" in text
+    assert "openenv" in text
 
 
 def test_task_count_and_difficulty_tiers():

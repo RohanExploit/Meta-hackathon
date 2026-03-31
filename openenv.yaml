@@ -6,6 +6,7 @@ author: "OpenEnv Hackathon"
 variables:
   - API_BASE_URL
   - MODEL_NAME
+  - OPENAI_API_KEY
   - HF_TOKEN
 
 requirements:
