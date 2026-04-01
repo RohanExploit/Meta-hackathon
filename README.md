@@ -80,9 +80,9 @@ RetailObservation(
     day: int,                    # Current day [0, horizon)
     cash: float,                 # Available funds
     inventory: Dict[str, int],   # Current stock by product
-    recent_demand_luxury: Dict,  # Demand signal (luxury segment)
-    recent_demand_budget: Dict,  # Demand signal (budget segment)
-    recent_stockouts: Dict,      # Stockout indicators per product
+    recent_demand_luxury: Dict,  # Rolling 3-day average of realized luxury demand
+    recent_demand_budget: Dict,  # Rolling 3-day average of realized budget demand
+    recent_stockouts: Dict,      # Per-product stockout count (steps with unmet demand)
     prices_luxury: Dict,         # Current luxury prices
     prices_budget: Dict,         # Current budget prices
     disruption_active: bool,     # Is a disruption currently happening?
@@ -203,12 +203,15 @@ All endpoints are served by FastAPI with automatic OpenAPI docs at `/docs`.
 | `/tasks` | GET | List all 5 tasks with metadata |
 | `/reset` | POST | Reset environment to a task: `{"task_name": "easy", "seed": 42}` |
 | `/step` | POST | Execute action: `{"action": {"action": "order", "product": "Product_A", "quantity": 5}}` |
-| `/state` | GET | Full internal state (for debugging) |
+| `/state` | GET | Full internal state + episode metrics (for debugging and scoring) |
 | `/evaluate` | POST | Score an episode summary or batch of summaries |
 | `/live/start` | POST | Start real-time continuous stepping (heuristic or noop mode) |
 | `/live/stop` | POST | Stop real-time stepping |
 | `/live/status` | GET | Real-time runner status |
 | `/live/latest` | GET | Latest real-time tick observation |
+| `/live/stream` | GET | **Server-Sent Events** stream of live runner ticks (real-time push, no polling needed) |
+| `/dashboard` | GET | Modern visual dashboard UI (Chart.js charts, manual actions, live runner) |
+| `/` | GET | Classic terminal-style UI |
 
 ### Example: Full Episode
 
@@ -296,9 +299,11 @@ Meta-hackathon/
 │
 ├── server/                     # FastAPI server package
 │   ├── __init__.py
-│   ├── app.py                  # 10 API endpoints + LiveRunner
+│   ├── app.py                  # 12 API endpoints + LiveRunner + SSE stream
 │   └── ui/
-│       └── index.html          # Terminal-style web UI
+│       ├── index.html          # Terminal-style web UI (/)
+│       ├── dashboard.html      # Modern visual dashboard (/dashboard) — Chart.js charts, live runner
+│       └── chart.umd.min.js    # Bundled Chart.js (served at /static/chart.js)
 │
 ├── tests/
 │   └── test_compliance.py      # 6 compliance tests
@@ -362,6 +367,7 @@ Agents see demand signals, not true demand distributions. This mirrors reality: 
 | `MODEL_NAME` | For inference | Model identifier (e.g., `NousResearch/Nous-Hermes-2-Mistral-7B-DPO`) |
 | `OPENAI_API_KEY` | For inference | API key / HF token for authentication |
 | `PORT` | Optional | Server port (default: `8000`) |
+| `ENV_BASE_URL` | For inference | Environment server base URL (default: `http://127.0.0.1:8000`) |
 
 ---
 

@@ -933,18 +933,17 @@ async function doStep(action) {
 async function showScore() {
   if (!state.obs) return;
   try {
-    // Build a minimal summary from observed data
+    // Use episode_metrics returned by /state (includes profit, fill_rate, etc.)
     const res = await api("/state");
-    const s = res.state;
-    if (!s) return;
+    const m = res.episode_metrics;
+    if (!m) return;
     const summary = {
-      total_revenue:       s.total_revenue ?? 0,
-      total_holding_cost:  s.total_holding_cost ?? 0,
-      total_stockouts:     s.total_stockouts ?? 0,
-      total_demand:        s.total_demand ?? 1,
-      total_sales:         s.total_sales ?? 0,
-      baseline_profit:     s.task_config?.baseline_profit ?? 100,
-      horizon:             s.task_config?.horizon ?? state.horizon,
+      profit:                   m.profit ?? 0,
+      baseline_profit:          m.baseline_profit ?? 100,
+      total_demand:             m.total_demand ?? 1,
+      total_sales:              m.total_sales ?? 0,
+      total_holding_cost:       m.total_holding_cost ?? 0,
+      max_possible_holding_cost: m.max_possible_holding_cost ?? 0,
     };
     const sr = await api("/evaluate", "POST", { summary });
     const r = sr.result;

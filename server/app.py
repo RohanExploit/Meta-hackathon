@@ -1,4 +1,6 @@
 """FastAPI server for multi-channel retail environment."""
+import asyncio
+import json
 import os
 from pathlib import Path
 import threading
@@ -7,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
 from environment.grader import evaluate_seeded_summaries, score_episode
@@ -264,11 +266,12 @@ async def step_environment(request: StepRequest):
 
 @app.get("/state")
 async def get_state():
-    """Get current internal state."""
+    """Get current internal state and episode metrics."""
     try:
         with env_lock:
             state = env.get_state()
-        return {"state": state}
+            metrics = dict(env.episode_metrics)
+        return {"state": state, "episode_metrics": metrics}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -350,6 +353,39 @@ async def live_status():
 async def live_latest():
     """Get latest realtime tick payload."""
     return live_runner.latest()
+
+
+@app.get("/live/stream")
+async def live_stream():
+    """Server-Sent Events stream for realtime live runner updates.
+
+    Clients receive a ``data:`` event containing a JSON-encoded payload
+    identical to ``/live/latest`` every 500 ms while the connection is open.
+    This removes the need for client-side polling.
+    """
+
+    async def _event_generator():
+        try:
+            while True:
+                data = live_runner.latest()
+                yield f"data: {json.dumps(data)}\n\n"
+                await asyncio.sleep(0.5)
+        except GeneratorExit:
+            return
+        except Exception:
+            # Yield a generic error event so connected clients can react, then close.
+            yield f"data: {json.dumps({'error': 'stream error'})}\n\n"
+            return
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/health")
