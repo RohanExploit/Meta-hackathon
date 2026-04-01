@@ -1,0 +1,1113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Retail Env · Dashboard</title>
+  <script src="/static/chart.js"></script>
+  <style>
+    /* ── Design tokens ───────────────────────────────────────────── */
+    :root {
+      --bg:      #0e1117;
+      --surface: #161b22;
+      --card:    #1c2128;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --blue:    #58a6ff;
+      --green:   #3fb950;
+      --yellow:  #d29922;
+      --red:     #f85149;
+      --purple:  #bc8cff;
+      --orange:  #ffa657;
+      --teal:    #39d3bb;
+      --r:       8px;
+      --shadow:  0 4px 24px #00000060;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100%;
+    }
+
+    /* ── Top nav ─────────────────────────────────────────────────── */
+    .nav {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; gap: 16px;
+      padding: 10px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 15px; color: var(--blue);
+      text-decoration: none;
+    }
+    .nav-brand .logo { font-size: 20px; }
+    .nav-links { display: flex; gap: 4px; }
+    .nav-link {
+      padding: 5px 14px;
+      border-radius: var(--r);
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { background: var(--card); color: var(--text); }
+    .nav-link.active { background: var(--blue)22; color: var(--blue); font-weight: 600; }
+    .nav-spacer { flex: 1; }
+    #status-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--muted);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px; padding: 4px 12px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.4s infinite; }
+    .dot.done    { background: var(--blue); }
+    .dot.error   { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+
+    /* ── Main layout ─────────────────────────────────────────────── */
+    .main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: auto;
+      gap: 16px;
+      padding: 16px 20px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────── */
+    .sidebar { display: flex; flex-direction: column; gap: 14px; }
+
+    /* ── Cards ───────────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 14px 16px;
+    }
+    .card-title {
+      font-size: 11px; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Task selector ───────────────────────────────────────────── */
+    select, input[type=number] {
+      width: 100%;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 7px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    select:focus, input[type=number]:focus { border-color: var(--blue); }
+
+    .task-desc {
+      margin-top: 8px;
+      font-size: 12px; color: var(--muted);
+      line-height: 1.5;
+    }
+    .task-badge {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 700;
+      margin-top: 4px;
+    }
+    .badge-easy    { background: var(--green)22;  color: var(--green); }
+    .badge-medium  { background: var(--yellow)22; color: var(--yellow); }
+    .badge-hard    { background: var(--red)22;    color: var(--red); }
+    .badge-expert  { background: var(--purple)22; color: var(--purple); }
+
+    /* ── Buttons ─────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px;
+      border: none; border-radius: var(--r);
+      padding: 8px 14px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s; text-decoration: none;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary  { background: var(--blue);   color: #000; }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-success  { background: var(--green);  color: #000; }
+    .btn-success:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-danger   { background: var(--red);    color: #fff; }
+    .btn-danger:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-ghost {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-full { width: 100%; }
+
+    /* ── Metrics grid ────────────────────────────────────────────── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 12px 14px;
+    }
+    .metric-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .metric-value { font-size: 20px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+    .metric-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .metric.good  .metric-value { color: var(--green); }
+    .metric.warn  .metric-value { color: var(--yellow); }
+    .metric.bad   .metric-value { color: var(--red); }
+    .metric.info  .metric-value { color: var(--blue); }
+
+    /* ── Disruption banner ───────────────────────────────────────── */
+    #disruption-banner {
+      display: none;
+      background: var(--red)22;
+      border: 1px solid var(--red)88;
+      border-radius: var(--r);
+      padding: 10px 14px;
+      font-size: 13px; color: var(--red);
+      font-weight: 600;
+    }
+    #disruption-banner.show { display: flex; align-items: center; gap: 8px; }
+
+    /* ── Channels grid ───────────────────────────────────────────── */
+    .channels-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .channel-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 12px 14px;
+    }
+    .channel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .channel-name { font-weight: 700; font-size: 13px; }
+    .channel-name.luxury { color: var(--purple); }
+    .channel-name.budget { color: var(--teal); }
+    .channel-product {
+      font-size: 11px; color: var(--muted);
+      padding: 8px 0; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between;
+    }
+    .channel-product:first-of-type { border-top: none; padding-top: 0; }
+
+    /* ── Action panel ────────────────────────────────────────────── */
+    .action-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .tab {
+      padding: 5px 12px; border-radius: var(--r);
+      background: var(--surface); color: var(--muted);
+      border: 1px solid var(--border);
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { background: var(--blue)22; color: var(--blue); border-color: var(--blue)88; }
+    .action-form { display: none; flex-direction: column; gap: 10px; }
+    .action-form.show { display: flex; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-label { font-size: 12px; color: var(--muted); }
+
+    /* ── Charts ──────────────────────────────────────────────────── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .chart-wrap { position: relative; height: 200px; }
+    canvas { border-radius: var(--r); }
+
+    /* ── Event log ───────────────────────────────────────────────── */
+    #event-log {
+      height: 180px;
+      overflow-y: auto;
+      font-size: 12px;
+      font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .log-line { color: var(--muted); }
+    .log-line .ts  { color: var(--border); margin-right: 8px; }
+    .log-line .lv-info  { color: var(--blue); }
+    .log-line .lv-ok    { color: var(--green); }
+    .log-line .lv-warn  { color: var(--yellow); }
+    .log-line .lv-err   { color: var(--red); }
+
+    /* ── Inventory progress bars ─────────────────────────────────── */
+    .inv-row {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 6px;
+    }
+    .inv-name { width: 80px; font-size: 12px; color: var(--muted); }
+    .inv-bar-track {
+      flex: 1; height: 8px; background: var(--surface);
+      border-radius: 4px; overflow: hidden;
+    }
+    .inv-bar { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .inv-val { width: 36px; text-align: right; font-size: 12px; font-weight: 700; }
+
+    /* ── Score panel ─────────────────────────────────────────────── */
+    #score-panel {
+      display: none;
+      background: var(--green)11;
+      border: 1px solid var(--green)55;
+      border-radius: var(--r);
+      padding: 14px 16px;
+    }
+    #score-panel.show { display: block; }
+    .score-num {
+      font-size: 48px; font-weight: 800;
+      color: var(--green); text-align: center;
+      margin: 8px 0;
+    }
+    .score-detail {
+      display: grid; grid-template-columns: repeat(3,1fr); gap: 10px;
+      margin-top: 10px;
+    }
+    .score-item { text-align: center; }
+    .score-item .v { font-size: 20px; font-weight: 700; }
+    .score-item .l { font-size: 11px; color: var(--muted); }
+
+    /* ── Live mode toggle ────────────────────────────────────────── */
+    .live-controls { display: flex; gap: 8px; flex-direction: column; }
+    .live-row { display: flex; gap: 8px; }
+    .live-row .btn { flex: 1; }
+
+    /* ── Responsive ──────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .main { grid-template-columns: 1fr; }
+      .charts-grid { grid-template-columns: 1fr; }
+      .channels-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ───────────────────────────────────────────────── -->
+<nav class="nav">
+  <a class="nav-brand" href="/dashboard">
+    <span class="logo">🏪</span> Retail Env
+  </a>
+  <div class="nav-links">
+    <a class="nav-link active" href="/dashboard">Dashboard</a>
+    <a class="nav-link" href="/" target="_blank">Classic UI ↗</a>
+    <a class="nav-link" href="/docs" target="_blank">API Docs ↗</a>
+  </div>
+  <div class="nav-spacer"></div>
+  <div id="status-badge">
+    <span class="dot" id="status-dot"></span>
+    <span id="status-text">Idle</span>
+  </div>
+</nav>
+
+<!-- ── Main layout ───────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- ── Sidebar ───────────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <!-- Task selector -->
+    <div class="card">
+      <div class="card-title">⚙ Task Setup</div>
+      <div class="form-group">
+        <label class="form-label">Task</label>
+        <select id="task-select">
+          <option value="easy">easy — 10 days, 1 product</option>
+          <option value="medium_simple">medium_simple — 14 days, 2 products</option>
+          <option value="medium_challenge" selected>medium_challenge — 14 days, disruptions</option>
+          <option value="hard">hard — 21 days, 3 products</option>
+          <option value="expert">expert — 30 days, 4 products</option>
+        </select>
+      </div>
+      <div id="task-desc" class="task-desc"></div>
+      <br>
+      <div class="form-group">
+        <label class="form-label">Seed (optional)</label>
+        <input type="number" id="seed-input" placeholder="random">
+      </div>
+      <br>
+      <button class="btn btn-primary btn-full" id="btn-reset">▶ Start Episode</button>
+    </div>
+
+    <!-- Live runner -->
+    <div class="card">
+      <div class="card-title">⚡ Live Runner (Auto-step)</div>
+      <div class="live-controls">
+        <div class="form-group">
+          <label class="form-label">Mode</label>
+          <select id="live-mode">
+            <option value="heuristic">Heuristic (smart reorder+promote)</option>
+            <option value="noop">No-Op (do nothing)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Interval (ms)</label>
+          <input type="number" id="live-interval" value="800" min="100" max="5000">
+        </div>
+        <div class="live-row">
+          <button class="btn btn-success" id="btn-live-start">▶ Start</button>
+          <button class="btn btn-danger"  id="btn-live-stop" disabled>⏹ Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Episode score -->
+    <div id="score-panel" class="card">
+      <div class="card-title">🏆 Episode Result</div>
+      <div class="score-num" id="score-value">—</div>
+      <div class="score-detail">
+        <div class="score-item">
+          <div class="v" id="sc-profit">—</div>
+          <div class="l">Profit Score</div>
+        </div>
+        <div class="score-item">
+          <div class="v" id="sc-fill">—</div>
+          <div class="l">Fill Rate</div>
+        </div>
+        <div class="score-item">
+          <div class="v" id="sc-eff">—</div>
+          <div class="l">Efficiency</div>
+        </div>
+      </div>
+      <br>
+      <button class="btn btn-ghost btn-full" id="btn-score">📊 Compute Score</button>
+    </div>
+
+    <!-- Event log -->
+    <div class="card">
+      <div class="card-title">📋 Event Log</div>
+      <div id="event-log"></div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main content ───────────────────────────────────────────── -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+
+    <!-- Disruption banner -->
+    <div id="disruption-banner">
+      <span>⚠</span>
+      <span id="disruption-text">Supply disruption active — severity <span id="disruption-sev">0.0</span></span>
+    </div>
+
+    <!-- Key metrics -->
+    <div class="card">
+      <div class="card-title">📈 Key Metrics</div>
+      <div class="metrics" id="metrics-grid">
+        <div class="metric info">
+          <div class="metric-label">Day</div>
+          <div class="metric-value" id="m-day">—</div>
+          <div class="metric-sub" id="m-horizon">/ — horizon</div>
+        </div>
+        <div class="metric" id="m-cash-card">
+          <div class="metric-label">Cash</div>
+          <div class="metric-value" id="m-cash">—</div>
+          <div class="metric-sub">$</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Last Reward</div>
+          <div class="metric-value" id="m-reward">—</div>
+          <div class="metric-sub">per step</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Market Conf.</div>
+          <div class="metric-value" id="m-conf">—</div>
+          <div class="metric-sub">0–1 scale</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Channel breakdown -->
+    <div class="card">
+      <div class="card-title">🛒 Channel Breakdown</div>
+      <div class="channels-grid" id="channels-grid">
+        <div class="channel-card">
+          <div class="channel-header">
+            <span class="channel-name luxury">💎 Luxury</span>
+            <span class="task-badge badge-hard">High Margin</span>
+          </div>
+          <div id="luxury-products">—</div>
+        </div>
+        <div class="channel-card">
+          <div class="channel-header">
+            <span class="channel-name budget">💰 Budget</span>
+            <span class="task-badge badge-easy">High Volume</span>
+          </div>
+          <div id="budget-products">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inventory bars -->
+    <div class="card">
+      <div class="card-title">📦 Inventory Levels</div>
+      <div id="inventory-bars">—</div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid">
+      <div class="card">
+        <div class="card-title">💵 Cash Over Time</div>
+        <div class="chart-wrap"><canvas id="chart-cash"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📊 Inventory Over Time</div>
+        <div class="chart-wrap"><canvas id="chart-inv"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📉 Demand Signals</div>
+        <div class="chart-wrap"><canvas id="chart-demand"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏷 Prices</div>
+        <div class="chart-wrap"><canvas id="chart-prices"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Manual action panel -->
+    <div class="card">
+      <div class="card-title">🎮 Manual Actions</div>
+      <div class="action-tabs" id="action-tabs">
+        <div class="tab active" data-tab="noop">No-Op</div>
+        <div class="tab" data-tab="order">Order</div>
+        <div class="tab" data-tab="allocate">Allocate</div>
+        <div class="tab" data-tab="set_price">Set Price</div>
+        <div class="tab" data-tab="promote">Promote</div>
+      </div>
+
+      <!-- NOOP -->
+      <div class="action-form show" id="form-noop">
+        <p style="color:var(--muted);font-size:13px;">Take no action this step. The environment advances one day.</p>
+        <button class="btn btn-ghost" id="btn-step-noop">Submit No-Op</button>
+      </div>
+
+      <!-- ORDER -->
+      <div class="action-form" id="form-order">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Product</label>
+            <select id="order-product"><option>—</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Quantity</label>
+            <input type="number" id="order-qty" value="5" min="1" max="100">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-step-order">Submit Order</button>
+      </div>
+
+      <!-- ALLOCATE -->
+      <div class="action-form" id="form-allocate">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Product</label>
+            <select id="alloc-product"><option>—</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Luxury Units</label>
+            <input type="number" id="alloc-luxury" value="5" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Budget Units</label>
+            <input type="number" id="alloc-budget" value="5" min="0">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-step-alloc">Submit Allocation</button>
+      </div>
+
+      <!-- SET PRICE -->
+      <div class="action-form" id="form-set_price">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Product</label>
+            <select id="price-product"><option>—</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Segment</label>
+            <select id="price-segment">
+              <option value="luxury">Luxury</option>
+              <option value="budget">Budget</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">New Price ($)</label>
+          <input type="number" id="price-value" value="20.00" step="0.5" min="0">
+        </div>
+        <button class="btn btn-primary" id="btn-step-price">Set Price</button>
+      </div>
+
+      <!-- PROMOTE -->
+      <div class="action-form" id="form-promote">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Product</label>
+            <select id="promo-product"><option>—</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Budget ($)</label>
+            <input type="number" id="promo-budget" value="10.00" step="1" min="0">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-step-promo">Run Promotion</button>
+      </div>
+    </div>
+
+  </div><!-- /main content -->
+</div><!-- /main -->
+
+<script>
+/* ──────────────────────────────────────────────────────────────────
+   State
+────────────────────────────────────────────────────────────────── */
+const state = {
+  obs: null,
+  done: false,
+  lastReward: 0,
+  totalReward: 0,
+  tick: 0,
+  cashHistory: [],
+  invHistory: {},
+  demandLuxHistory: {},
+  demandBudHistory: {},
+  priceLuxHistory: {},
+  priceBudHistory: {},
+  products: [],
+  horizon: 30,
+  liveRunning: false,
+  livePoller: null,
+};
+
+/* task metadata */
+const TASK_META = {
+  easy:             { label: "Easy",   cls: "badge-easy",   horizon: 10, products: 1, desc: "Single product, stable market. Good for learning the basics of pricing and ordering." },
+  medium_simple:    { label: "Medium", cls: "badge-medium", horizon: 14, products: 2, desc: "Two products, mostly stable supply (95%). Introduces multi-product tradeoffs." },
+  medium_challenge: { label: "Medium", cls: "badge-medium", horizon: 14, products: 2, desc: "Two products, supply delays (88% reliability). Price elasticity becomes important." },
+  hard:             { label: "Hard",   cls: "badge-hard",   horizon: 21, products: 3, desc: "Three products, frequent disruptions. Active disruption recovery required." },
+  expert:           { label: "Expert", cls: "badge-expert", horizon: 30, products: 4, desc: "Four products, extreme chaos, low supplier reliability. Only sophisticated strategies survive." },
+};
+
+/* ──────────────────────────────────────────────────────────────────
+   Chart setup
+────────────────────────────────────────────────────────────────── */
+const CHART_DEFAULTS = {
+  responsive: true, maintainAspectRatio: false,
+  animation: { duration: 200 },
+  plugins: { legend: { labels: { color: "#8b949e", font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: "#8b949e", maxTicksLimit: 10, font: { size: 10 } }, grid: { color: "#21262d" } },
+    y: { ticks: { color: "#8b949e", font: { size: 10 } }, grid: { color: "#21262d" } },
+  },
+};
+
+function mkChart(id, type, datasets, yLabel) {
+  try {
+    const el = document.getElementById(id);
+    if (!el) { console.warn(`mkChart: canvas #${id} not found`); return null; }
+    const ctx = el.getContext("2d");
+    return new Chart(ctx, {
+      type,
+      data: { labels: [], datasets },
+      options: {
+        ...CHART_DEFAULTS,
+        scales: {
+          ...CHART_DEFAULTS.scales,
+          y: { ...CHART_DEFAULTS.scales.y, title: { display: !!yLabel, text: yLabel, color: "#8b949e", font: { size: 10 } } },
+        },
+      },
+    });
+  } catch (err) {
+    console.error(`mkChart(${id}) failed:`, err);
+    log(`Chart init failed for #${id}: ${err.message}`, "warn");
+    return null;
+  }
+}
+
+const COLORS = ["#58a6ff", "#3fb950", "#bc8cff", "#ffa657", "#39d3bb", "#f85149"];
+
+const charts = {
+  cash: mkChart("chart-cash", "line", [{
+    label: "Cash ($)", borderColor: "#3fb950", backgroundColor: "#3fb95018",
+    data: [], fill: true, tension: 0.3, pointRadius: 2,
+  }], "$"),
+  inv:  null,  // built dynamically
+  demand: null,
+  prices: null,
+};
+
+function buildDynamicCharts() {
+  const prods = state.products;
+  if (!prods.length) return;
+
+  [charts.inv, charts.demand, charts.prices].forEach(c => c && c.destroy());
+
+  charts.inv = mkChart("chart-inv", "line",
+    prods.map((p, i) => ({ label: p, borderColor: COLORS[i % COLORS.length], data: [], tension: 0.3, pointRadius: 2 })),
+    "units"
+  );
+  charts.demand = mkChart("chart-demand", "line",
+    [
+      ...prods.map((p, i) => ({ label: `${p} lux`, borderColor: COLORS[i % COLORS.length], borderDash: [], data: [], tension: 0.3, pointRadius: 2 })),
+      ...prods.map((p, i) => ({ label: `${p} bud`, borderColor: COLORS[i % COLORS.length], borderDash: [4,3], data: [], tension: 0.3, pointRadius: 2 })),
+    ]
+  );
+  charts.prices = mkChart("chart-prices", "line",
+    [
+      ...prods.map((p, i) => ({ label: `${p} lux`, borderColor: COLORS[i % COLORS.length], borderDash: [], data: [], tension: 0.3, pointRadius: 2 })),
+      ...prods.map((p, i) => ({ label: `${p} bud`, borderColor: COLORS[i % COLORS.length], borderDash: [4,3], data: [], tension: 0.3, pointRadius: 2 })),
+    ],
+    "$"
+  );
+}
+
+function pushChartData(obs, reward) {
+  const day = obs.day;
+  const prods = state.products;
+
+  // Cash
+  if (charts.cash) {
+    charts.cash.data.labels.push(day);
+    charts.cash.data.datasets[0].data.push(obs.cash);
+    charts.cash.update("none");
+  }
+
+  if (!charts.inv || !charts.demand || !charts.prices) return;
+
+  // Inventory
+  charts.inv.data.labels.push(day);
+  prods.forEach((p, i) => charts.inv.data.datasets[i].data.push(obs.inventory[p] ?? 0));
+  charts.inv.update("none");
+
+  // Demand
+  charts.demand.data.labels.push(day);
+  prods.forEach((p, i) => {
+    charts.demand.data.datasets[i].data.push(obs.recent_demand_luxury[p] ?? 0);
+    charts.demand.data.datasets[prods.length + i].data.push(obs.recent_demand_budget[p] ?? 0);
+  });
+  charts.demand.update("none");
+
+  // Prices
+  charts.prices.data.labels.push(day);
+  prods.forEach((p, i) => {
+    charts.prices.data.datasets[i].data.push(obs.prices_luxury[p] ?? 0);
+    charts.prices.data.datasets[prods.length + i].data.push(obs.prices_budget[p] ?? 0);
+  });
+  charts.prices.update("none");
+}
+
+function resetCharts() {
+  if (charts.cash) {
+    charts.cash.data.labels = [];
+    charts.cash.data.datasets[0].data = [];
+    charts.cash.update("none");
+  }
+  [charts.inv, charts.demand, charts.prices].forEach(c => {
+    if (c) { c.data.labels = []; c.data.datasets.forEach(d => d.data = []); c.update("none"); }
+  });
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   UI helpers
+────────────────────────────────────────────────────────────────── */
+function $(id) { return document.getElementById(id); }
+function setVal(id, v) { const el = $(id); if (el) el.textContent = v; }
+function fmt(n, dec=2) { return typeof n === "number" ? n.toFixed(dec) : "—"; }
+function esc(s) {
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+function log(msg, level="info") {
+  const el = $("event-log");
+  const line = document.createElement("div");
+  line.className = "log-line";
+  const ts = new Date().toTimeString().slice(0,8);
+
+  const tsSpan = document.createElement("span");
+  tsSpan.className = "ts";
+  tsSpan.textContent = ts;
+
+  const lvSpan = document.createElement("span");
+  lvSpan.className = "lv-" + level;
+  lvSpan.textContent = "[" + level.toUpperCase() + "]";
+
+  const msgNode = document.createTextNode(" " + msg);
+
+  line.appendChild(tsSpan);
+  line.appendChild(lvSpan);
+  line.appendChild(msgNode);
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(text, cls="") {
+  $("status-text").textContent = text;
+  const dot = $("status-dot");
+  dot.className = "dot " + cls;
+}
+
+function populateProductSelects(products) {
+  ["order-product","alloc-product","price-product","promo-product"].forEach(id => {
+    const sel = $(id); if (!sel) return;
+    sel.innerHTML = products.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  });
+}
+
+function renderTaskDesc() {
+  const name = $("task-select").value;
+  const meta = TASK_META[name] || {};
+  const badge = meta.cls ? `<span class="task-badge ${meta.cls}">${meta.label}</span>` : "";
+  $("task-desc").innerHTML = `${badge} <br>${meta.desc || ""}`;
+}
+
+function renderObs(obs, reward) {
+  if (!obs) return;
+  state.obs = obs;
+  state.lastReward = reward;
+  state.tick++;
+
+  const prods = Object.keys(obs.inventory);
+  if (!state.products.length && prods.length) {
+    state.products = prods;
+    populateProductSelects(prods);
+    buildDynamicCharts();
+  }
+
+  // Key metrics
+  setVal("m-day", obs.day);
+  const meta = TASK_META[$("task-select").value];
+  setVal("m-horizon", `/ ${state.horizon} horizon`);
+
+  const cashCard = $("m-cash-card");
+  cashCard.className = "metric " + (obs.cash > 50 ? "good" : obs.cash > 0 ? "warn" : "bad");
+  setVal("m-cash", `$${fmt(obs.cash)}`);
+  setVal("m-reward", fmt(reward));
+  setVal("m-conf", fmt(obs.market_confidence));
+
+  // Disruption banner
+  const banner = $("disruption-banner");
+  if (obs.disruption_active) {
+    banner.classList.add("show");
+    setVal("disruption-sev", fmt(obs.disruption_severity));
+  } else {
+    banner.classList.remove("show");
+  }
+
+  // Channel breakdown
+  renderChannels(obs, prods);
+
+  // Inventory bars
+  renderInventoryBars(obs, prods);
+
+  // Charts
+  pushChartData(obs, reward);
+}
+
+function renderChannels(obs, prods) {
+  function rows(seg) {
+    return prods.map(p => {
+      const price = obs[`prices_${seg}`]?.[p] ?? "—";
+      const demand = obs[`recent_demand_${seg}`]?.[p] ?? "—";
+      const priceStr = esc(typeof price === "number" ? price.toFixed(2) : price);
+      const demandStr = esc(typeof demand === "number" ? demand.toFixed(1) : demand);
+      return `<div class="channel-product">
+        <span>${esc(p)}</span>
+        <span>$${priceStr} · <span style="color:var(--muted)">${demandStr}/day</span></span>
+      </div>`;
+    }).join("");
+  }
+  $("luxury-products").innerHTML = rows("luxury") || "—";
+  $("budget-products").innerHTML = rows("budget") || "—";
+}
+
+function renderInventoryBars(obs, prods) {
+  const maxInv = Math.max(1, ...prods.map(p => obs.inventory[p] ?? 0)) * 1.3;
+  const html = prods.map((p, i) => {
+    const inv = obs.inventory[p] ?? 0;
+    const pct = Math.min(100, (inv / maxInv) * 100);
+    const col = COLORS[i % COLORS.length];
+    const cls = inv < 3 ? "color:var(--red)" : "color:var(--text)";
+    return `<div class="inv-row">
+      <span class="inv-name">${esc(p)}</span>
+      <div class="inv-bar-track"><div class="inv-bar" style="width:${esc(pct.toFixed(2))}%;background:${esc(col)}"></div></div>
+      <span class="inv-val" style="${cls}">${esc(String(inv))}</span>
+    </div>`;
+  }).join("");
+  $("inventory-bars").innerHTML = html || "—";
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   API calls
+────────────────────────────────────────────────────────────────── */
+async function api(path, method="GET", body=null) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+
+async function doReset() {
+  try {
+    const taskName = $("task-select").value;
+    const seedRaw = $("seed-input").value;
+    const seed = seedRaw ? parseInt(seedRaw) : undefined;
+    const body = { task_name: taskName };
+    if (seed !== undefined) body.seed = seed;
+
+    log(`Resetting — task="${taskName}" seed=${seed ?? "random"}`, "info");
+    const res = await api("/reset", "POST", body);
+    state.done = false;
+    state.totalReward = 0;
+    state.tick = 0;
+    state.products = [];
+    state.horizon = res.info?.horizon ?? 30;
+    $("score-panel").classList.remove("show");
+
+    resetCharts();
+    renderObs(res.observation, 0);
+    setStatus(`Day ${res.observation.day} / ${state.horizon}`, "");
+    log(`Reset OK — horizon=${state.horizon} products=${Object.keys(res.observation.inventory).join(", ")}`, "ok");
+  } catch (e) {
+    log(`Reset failed: ${e.message}`, "err");
+    setStatus("Error", "error");
+  }
+}
+
+async function doStep(action) {
+  if (state.done) { log("Episode is done. Reset first.", "warn"); return; }
+  try {
+    const res = await api("/step", "POST", { action });
+    state.totalReward += res.reward;
+    renderObs(res.observation, res.reward);
+    setStatus(`Day ${res.observation.day} / ${state.horizon}`, "");
+    log(`Step: action=${JSON.stringify(action)} reward=${fmt(res.reward)}`, "ok");
+    if (res.done) {
+      state.done = true;
+      setStatus("Episode done", "done");
+      log("Episode finished!", "ok");
+      await showScore();
+    }
+  } catch (e) {
+    log(`Step failed: ${e.message}`, "err");
+  }
+}
+
+async function showScore() {
+  if (!state.obs) return;
+  try {
+    // Build a minimal summary from observed data
+    const res = await api("/state");
+    const s = res.state;
+    if (!s) return;
+    const summary = {
+      total_revenue:       s.total_revenue ?? 0,
+      total_holding_cost:  s.total_holding_cost ?? 0,
+      total_stockouts:     s.total_stockouts ?? 0,
+      total_demand:        s.total_demand ?? 1,
+      total_sales:         s.total_sales ?? 0,
+      baseline_profit:     s.task_config?.baseline_profit ?? 100,
+      horizon:             s.task_config?.horizon ?? state.horizon,
+    };
+    const sr = await api("/evaluate", "POST", { summary });
+    const r = sr.result;
+    $("score-panel").classList.add("show");
+    $("score-value").textContent = typeof r.score === "number" ? r.score.toFixed(3) : "—";
+    $("sc-profit").textContent = typeof r.profit_score === "number" ? r.profit_score.toFixed(2) : "—";
+    $("sc-fill").textContent = typeof r.fill_rate_score === "number" ? r.fill_rate_score.toFixed(2) : "—";
+    $("sc-eff").textContent = typeof r.efficiency_score === "number" ? r.efficiency_score.toFixed(2) : "—";
+  } catch (e) {
+    log(`Score computation: ${e.message}`, "warn");
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Live runner polling
+────────────────────────────────────────────────────────────────── */
+async function doLiveStart() {
+  const taskName = $("task-select").value;
+  const seedRaw = $("seed-input").value;
+  const seed = seedRaw ? parseInt(seedRaw) : undefined;
+  const mode = $("live-mode").value;
+  const interval = parseInt($("live-interval").value) || 800;
+  const body = { task_name: taskName, mode, interval_ms: interval };
+  if (seed !== undefined) body.seed = seed;
+
+  try {
+    const res = await api("/live/start", "POST", body);
+    state.done = false;
+    state.products = [];
+    state.totalReward = 0;
+    state.tick = 0;
+    state.liveRunning = true;
+    resetCharts();
+    $("score-panel").classList.remove("show");
+    $("btn-live-start").disabled = true;
+    $("btn-live-stop").disabled = false;
+    setStatus("Live running…", "running");
+    log(`Live started — mode=${mode} interval=${interval}ms task=${taskName}`, "ok");
+    startLivePoller(interval);
+  } catch (e) {
+    log(`Live start failed: ${e.message}`, "err");
+  }
+}
+
+function startLivePoller(intervalMs) {
+  if (state.livePoller) clearInterval(state.livePoller);
+  state.livePoller = setInterval(async () => {
+    try {
+      const latest = await api("/live/latest");
+      if (latest.observation) {
+        if (!state.products.length && latest.observation.inventory) {
+          state.products = Object.keys(latest.observation.inventory);
+          populateProductSelects(state.products);
+          buildDynamicCharts();
+        }
+        if (!state.horizon && latest.observation) {
+          // Try to get horizon from state
+          const st = await api("/state");
+          state.horizon = st.state?.task_config?.horizon ?? 30;
+        }
+        renderObs(latest.observation, latest.reward ?? 0);
+        setStatus(`Day ${latest.observation.day} / ${state.horizon} · tick ${latest.tick}`, "running");
+      }
+      if (latest.done || !latest.running) {
+        stopLivePoller();
+        state.done = latest.done;
+        setStatus(latest.done ? "Episode done" : "Stopped", latest.done ? "done" : "");
+        $("btn-live-start").disabled = false;
+        $("btn-live-stop").disabled = true;
+        state.liveRunning = false;
+        if (latest.done) {
+          log("Live episode finished!", "ok");
+          await showScore();
+        }
+        if (latest.error) log(`Live error: ${latest.error}`, "err");
+      }
+    } catch (e) {
+      log(`Poller error: ${e.message}`, "err");
+    }
+  }, Math.max(300, intervalMs));
+}
+
+function stopLivePoller() {
+  if (state.livePoller) { clearInterval(state.livePoller); state.livePoller = null; }
+}
+
+async function doLiveStop() {
+  try {
+    await api("/live/stop", "POST", { reason: "user_stop" });
+    stopLivePoller();
+    $("btn-live-start").disabled = false;
+    $("btn-live-stop").disabled = true;
+    state.liveRunning = false;
+    setStatus("Stopped", "");
+    log("Live runner stopped.", "warn");
+  } catch (e) {
+    log(`Live stop failed: ${e.message}`, "err");
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Event listeners
+────────────────────────────────────────────────────────────────── */
+$("task-select").addEventListener("change", renderTaskDesc);
+$("btn-reset").addEventListener("click", doReset);
+$("btn-live-start").addEventListener("click", doLiveStart);
+$("btn-live-stop").addEventListener("click", doLiveStop);
+$("btn-score").addEventListener("click", showScore);
+
+// Action tabs
+$("action-tabs").querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    $("action-tabs").querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".action-form").forEach(f => f.classList.remove("show"));
+    tab.classList.add("active");
+    $("form-" + tab.dataset.tab).classList.add("show");
+  });
+});
+
+// Submit actions
+$("btn-step-noop").addEventListener("click", () => doStep({ action: "noop" }));
+$("btn-step-order").addEventListener("click", () => doStep({
+  action: "order",
+  product: $("order-product").value,
+  quantity: parseInt($("order-qty").value),
+}));
+$("btn-step-alloc").addEventListener("click", () => doStep({
+  action: "allocate",
+  product: $("alloc-product").value,
+  luxury_units: parseInt($("alloc-luxury").value),
+  budget_units: parseInt($("alloc-budget").value),
+}));
+$("btn-step-price").addEventListener("click", () => doStep({
+  action: "set_price",
+  product: $("price-product").value,
+  segment: $("price-segment").value,
+  new_price: parseFloat($("price-value").value),
+}));
+$("btn-step-promo").addEventListener("click", () => doStep({
+  action: "promote",
+  product: $("promo-product").value,
+  budget_allocated: parseFloat($("promo-budget").value),
+}));
+
+/* ──────────────────────────────────────────────────────────────────
+   Init
+────────────────────────────────────────────────────────────────── */
+renderTaskDesc();
+log("Dashboard ready. Select a task and press Start Episode.", "info");
+// Check for a live-running session on load
+(async () => {
+  try {
+    const status = await api("/live/status");
+    if (status.running) {
+      state.liveRunning = true;
+      $("btn-live-start").disabled = true;
+      $("btn-live-stop").disabled = false;
+      setStatus("Live running…", "running");
+      log("Reconnected to existing live session.", "info");
+      startLivePoller(status.interval_ms || 800);
+    }
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>

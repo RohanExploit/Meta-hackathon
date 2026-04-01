@@ -358,6 +358,24 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/dashboard")
+async def ui_dashboard():
+    """Serve the modern visual dashboard UI."""
+    ui_file = UI_DIR / "dashboard.html"
+    if not ui_file.exists():
+        raise HTTPException(status_code=404, detail="Dashboard UI not found")
+    return FileResponse(ui_file, media_type="text/html")
+
+
+@app.get("/static/chart.js")
+async def serve_chartjs():
+    """Serve bundled Chart.js for the dashboard."""
+    js_file = UI_DIR / "chart.umd.min.js"
+    if not js_file.exists():
+        raise HTTPException(status_code=404, detail="Chart.js not found")
+    return FileResponse(js_file, media_type="application/javascript")
+
+
 @app.get("/")
 async def ui_home():
     """Serve the terminal UI."""
