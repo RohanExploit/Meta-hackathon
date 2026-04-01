@@ -125,6 +125,9 @@ class MultiChannelRetailEnv:
             cumulative_holding_cost=0.0,
             cumulative_stockouts=0,
             cumulative_demand_lost=0.0,
+            demand_history_luxury={p: [] for p in products},
+            demand_history_budget={p: [] for p in products},
+            stockouts_per_product={p: 0 for p in products},
         )
 
         self.episode_metrics = {
@@ -359,6 +362,8 @@ class MultiChannelRetailEnv:
                 0, int(self.state.pending_orders[product]) - int(qty)
             )
 
+    _DEMAND_HISTORY_WINDOW = 3  # rolling window size for demand history
+
     def _simulate_market(self, disruption_multiplier: float) -> float:
         """Simulate demand, allocations, and sales for each segment."""
         assert self.state is not None
@@ -384,6 +389,17 @@ class MultiChannelRetailEnv:
                 self.state.demand_elasticity[product],
                 disruption_multiplier,
             )
+
+            # Record actual demand in rolling history for realistic observations
+            hist_lux = self.state.demand_history_luxury.setdefault(product, [])
+            hist_lux.append(float(demand_lux))
+            if len(hist_lux) > self._DEMAND_HISTORY_WINDOW:
+                hist_lux.pop(0)
+
+            hist_bdg = self.state.demand_history_budget.setdefault(product, [])
+            hist_bdg.append(float(demand_bdg))
+            if len(hist_bdg) > self._DEMAND_HISTORY_WINDOW:
+                hist_bdg.pop(0)
 
             total_demand += demand_lux + demand_bdg
 
@@ -411,7 +427,7 @@ class MultiChannelRetailEnv:
             self.state.cumulative_sales_budget[product] += sales_bdg
             total_sales += sales_lux + sales_bdg
 
-            # Stockout tracking
+            # Stockout tracking — per product
             unmet_lux = max(0, int(demand_lux) - sales_lux)
             unmet_bdg = max(0, int(demand_bdg) - sales_bdg)
             unmet = unmet_lux + unmet_bdg
@@ -421,6 +437,9 @@ class MultiChannelRetailEnv:
                 self.episode_metrics["stockout_count"] += 1.0
                 self.state.cumulative_stockouts += 1
                 self.state.cumulative_demand_lost += float(unmet)
+                self.state.stockouts_per_product[product] = (
+                    self.state.stockouts_per_product.get(product, 0) + 1
+                )
 
         self.state.cash += total_revenue
         self.state.cumulative_revenue += total_revenue
@@ -491,17 +510,27 @@ class MultiChannelRetailEnv:
         if self.state is None:
             raise RuntimeError("Environment not initialized")
 
-        # Deterministic proxies derived from current state
-        recent_demand_luxury = {
-            p: float(max(0.1, self.state.base_demand_luxury[p]))
-            for p in self.state.inventory.keys()
-        }
-        recent_demand_budget = {
-            p: float(max(0.1, self.state.base_demand_budget[p]))
-            for p in self.state.inventory.keys()
-        }
+        # Use actual rolling demand history when available; fall back to base constants
+        # on day 0 before any market simulation has run.
+        recent_demand_luxury: Dict[str, float] = {}
+        recent_demand_budget: Dict[str, float] = {}
+        for p in self.state.inventory.keys():
+            hist_lux = self.state.demand_history_luxury.get(p, [])
+            recent_demand_luxury[p] = (
+                float(sum(hist_lux) / len(hist_lux))
+                if hist_lux
+                else float(max(0.1, self.state.base_demand_luxury[p]))
+            )
+            hist_bdg = self.state.demand_history_budget.get(p, [])
+            recent_demand_budget[p] = (
+                float(sum(hist_bdg) / len(hist_bdg))
+                if hist_bdg
+                else float(max(0.1, self.state.base_demand_budget[p]))
+            )
+
+        # Per-product stockout counts (how many steps this product had unmet demand)
         recent_stockouts = {
-            p: int(1 if self.state.cumulative_demand_lost > 0 else 0)
+            p: int(self.state.stockouts_per_product.get(p, 0))
             for p in self.state.inventory.keys()
         }
 

@@ -124,3 +124,10 @@ class RetailState(BaseModel):
     cumulative_holding_cost: float
     cumulative_stockouts: int
     cumulative_demand_lost: float
+
+    # Realtime demand history (rolling window, last 3 steps per product)
+    demand_history_luxury: Dict[str, List[float]] = Field(default_factory=dict)
+    demand_history_budget: Dict[str, List[float]] = Field(default_factory=dict)
+
+    # Per-product stockout counters (resets each episode)
+    stockouts_per_product: Dict[str, int] = Field(default_factory=dict)

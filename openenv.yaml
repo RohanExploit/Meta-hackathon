@@ -8,6 +8,7 @@ variables:
   - MODEL_NAME
   - OPENAI_API_KEY
   - HF_TOKEN
+  - ENV_BASE_URL
 
 requirements:
   - python >=3.10
@@ -36,3 +37,5 @@ endpoints:
   - POST /live/stop
   - GET /live/status
   - GET /live/latest
+  - GET /live/stream
+  - GET /dashboard
