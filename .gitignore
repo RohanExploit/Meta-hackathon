@@ -28,3 +28,10 @@ htmlcov/
 # Build artifacts
 dist/
 build/
+
+# RAG vectorstore
+vectorstore/
+
+# Environment files
+.env
+.env.local
