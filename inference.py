@@ -29,6 +29,13 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
+# Auto-load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import requests
 from openai import OpenAI
 
