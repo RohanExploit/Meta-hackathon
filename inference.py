@@ -34,10 +34,9 @@ from openai import OpenAI
 
 from environment.tasks import TASKS
 
-# ── Pipeline imports (the new RAG layer) ─────────────────────────────
-from pipeline.chain import PipelineResult, run_pipeline
-from pipeline.config import get_config
-from pipeline.safety import SafetyViolation
+# NOTE: Pipeline imports are lazy (inside demo_rag_pipeline) to avoid
+# breaking inference.py when RAG dependencies aren't installed.
+# This is critical for hackathon automated validation.
 
 # ── Configuration ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -68,6 +67,9 @@ async def demo_rag_pipeline():
     This showcases the full NVIDIA-inspired architecture:
         Safety → Router → Retrieval → Reranking → Generation → Safety
     """
+    # Lazy imports — only loaded when --rag-demo is used
+    from pipeline.chain import PipelineResult, run_pipeline
+
     print("\n" + "=" * 70)
     print("RAG PIPELINE DEMO — NVIDIA Build RAG at Scale (Free Tier)")
     print("=" * 70)

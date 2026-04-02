@@ -297,6 +297,14 @@ Meta-hackathon/
 │   ├── grader.py               # Deterministic scoring [0, 1]
 │   └── tasks.py                # 5 task definitions (easy → expert)
 │
+├── pipeline/                   # NVIDIA-inspired RAG pipeline (optional layer)
+│   ├── config.py               # Centralized model registry + tuning knobs
+│   ├── safety.py               # Llama Guard 3 input/output guardrails
+│   ├── router.py               # NIM-style Router Agent (query classification)
+│   ├── retriever.py            # Two-stage: FAISS dense retrieval + LLM reranking
+│   ├── chain.py                # LCEL orchestrator (safety→router→retrieval→gen)
+│   └── ingest.py               # SemanticChunker document ingestion
+│
 ├── server/                     # FastAPI server package
 │   ├── __init__.py
 │   ├── app.py                  # 12 API endpoints + LiveRunner + SSE stream
