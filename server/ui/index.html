@@ -492,7 +492,9 @@
     }
 
     async function api(path, method = "GET", body = null) {
-      const res = await fetch(path, {
+      // Make paths relative to handle HuggingFace Spaces mount paths / subdirectories
+      let relPath = path.startsWith("/") ? "." + path : path;
+      const res = await fetch(relPath, {
         method,
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : null,
