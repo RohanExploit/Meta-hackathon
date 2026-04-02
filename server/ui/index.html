@@ -310,6 +310,7 @@
         <label class="tiny">Task</label>
         <select id="taskSelect">
           <option value="easy">easy</option>
+          <option value="medium_simple">medium_simple</option>
           <option value="medium">medium</option>
           <option value="hard">hard</option>
         </select>
@@ -350,30 +351,12 @@
             </select>
           </div>
           <div>
-            <label class="tiny">Mode</label>
-            <select id="modeSelect">
-              <option value="manual">manual</option>
-              <option value="heuristic">heuristic</option>
-            </select>
+            <!-- Mode select removed -->
+            <input type="hidden" id="modeSelect" value="manual">
           </div>
         </div>
 
-        <div class="row2" style="margin-top:8px">
-          <div>
-            <label class="tiny">Segment (for set_price)</label>
-            <select id="segmentSelect">
-              <option value="budget">budget</option>
-              <option value="luxury">luxury</option>
-            </select>
-          </div>
-          <div>
-            <label class="tiny">Execution Mode</label>
-            <select id="modeSelect">
-              <option value="manual">manual</option>
-              <option value="heuristic">heuristic</option>
-            </select>
-          </div>
-        </div>
+
 
         <div class="hotkeys">
           <span class="chip">/reset [task] [seed]</span>
@@ -835,11 +818,11 @@
     $("stepBtn").addEventListener("click", async () => {
       if (!state.observation || state.done) return;
       try {
-        const mode = $("modeSelect").value;
-        const action = mode === "heuristic" ? autoAction() : manualAction();
+        const action = manualAction();
         await doStep(action);
       } catch (e) { line(`STEP FAILED ${e.message}`, "bad"); }
     });
+
     $("auto1Btn").addEventListener("click", async () => {
       if (!state.observation || state.done) return;
       try { await doStep(autoAction()); } catch (e) { line(`AUTO STEP FAILED ${e.message}`, "bad"); }
@@ -935,7 +918,7 @@
       try {
         const t = await api("/tasks");
         const sel = $("taskSelect");
-        const canonical = ["easy", "medium", "hard"];
+        const canonical = ["easy", "medium_simple", "medium_challenge", "hard", "expert"];
         sel.innerHTML = "";
         canonical.forEach((name) => {
           const op = document.createElement("option");

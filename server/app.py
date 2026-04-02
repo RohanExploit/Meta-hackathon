@@ -107,7 +107,9 @@ env_lock = threading.Lock()
 class LiveRunner:
     """Realtime step runner for continuous wall-clock execution."""
 
-    def __init__(self) -> None:
+    def __init__(self, env_ref, lock_ref) -> None:
+        self.env = env_ref
+        self.env_lock = lock_ref
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._mode = "heuristic"
@@ -143,20 +145,20 @@ class LiveRunner:
     def _run_loop(self) -> None:
         while self._running:
             try:
-                with env_lock:
-                    if env.state is None:
+                with self.env_lock:
+                    if self.env.state is None:
                         self._set_latest(error="Environment not initialized. Use /live/start with task_name.")
                         time.sleep(self._interval_s)
                         continue
 
-                    obs = env._get_observation()
+                    obs = self.env._get_observation()
                     if self._mode == "noop":
                         action_payload = {"action": "noop"}
                     else:
                         action_payload = self._heuristic_action(obs)
 
                     action = _parse_action(action_payload)
-                    observation, reward, done, info = env.step(action)
+                    observation, reward, done, info = self.env.step(action)
 
                 self._tick += 1
                 self._set_latest(
@@ -217,7 +219,7 @@ class LiveRunner:
             return dict(self._latest)
 
 
-live_runner = LiveRunner()
+live_runner = LiveRunner(env, env_lock)
 
 
 @app.post("/reset")
