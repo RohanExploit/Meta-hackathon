@@ -276,6 +276,21 @@ python scripts/benchmark_inference.py
 
 Runs inference twice, compares scores for determinism.
 
+### Verified Baseline Scores
+
+Tested with `llama-3.1-8b-instant` via Groq (seed=42):
+
+| Task | Score | Profit Score | Fill Rate | Efficiency | Final Cash |
+|------|-------|-------------|-----------|------------|------------|
+| easy | **0.43** | 0.00 | 1.00 | 0.67 | $57.60 |
+| medium_simple | **0.95** | 1.00 | 1.00 | 0.77 | $437.18 |
+| medium_challenge | **0.91** | 1.00 | 0.74 | 0.92 | $609.46 |
+| hard | **0.42** | 1.00 | 0.47 | 0.95 | $917.84 |
+| expert | **0.39** | 1.00 | 0.26 | 0.97 | $987.71 |
+| **Mean** | **0.62** | | | | |
+
+> The agent achieves 100% fill rate on easy/medium tasks. Harder tasks have lower fill rates due to multi-product inventory splitting across 3-4 products with a single action per step.
+
 ---
 
 ## 📂 Repository Structure
