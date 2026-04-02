@@ -117,34 +117,35 @@ async def demo_rag_pipeline():
 # RETAIL ENVIRONMENT AGENT — OpenEnv-compliant inference loop
 # ══════════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are an AI retail manager optimizing inventory and pricing for maximum profit.
+SYSTEM_PROMPT = """You are an AI retail manager. Your score depends on THREE factors:
+  50% profit, 30% fill_rate (sales/demand), 20% efficiency.
+  CRITICAL: If fill_rate drops below 60%, your ENTIRE score is HALVED.
 
-Available actions:
-1. {"action": "allocate", "product": "str", "luxury_units": int, "budget_units": int}
-   - Allocate inventory to luxury and budget customer segments
+Available actions (pick exactly ONE per step as JSON):
+1. {"action": "order", "product": "<name>", "quantity": <int>}
+   Order stock from supplier. Cost is ~$5-6/unit. Lead time 1-2 days.
 
-2. {"action": "set_price", "product": "str", "segment": "luxury|budget", "new_price": float}
-   - Set price for a segment (higher price = lower demand but higher margin)
+2. {"action": "allocate", "product": "<name>", "luxury_units": <int>, "budget_units": <int>}
+   Split inventory between luxury (high-margin) and budget (high-volume) segments.
 
-3. {"action": "order", "product": "str", "quantity": int}
-   - Order stock from supplier (leads to supply cost and lead time)
+3. {"action": "set_price", "product": "<name>", "segment": "luxury|budget", "new_price": <float>}
+   Adjust price. Higher price = fewer sales but more revenue per unit.
 
-4. {"action": "promote", "product": "str", "budget_allocated": float}
-   - Run promotion to increase demand (costs cash upfront)
+4. {"action": "promote", "product": "<name>", "budget_allocated": <float>}
+   Spend cash to boost demand. Use during disruptions.
 
 5. {"action": "noop"}
-   - Do nothing
+   Do nothing this step.
 
-Strategy tips:
-- Monitor disruption_active flag; if true, consider promotions to recover
-- Higher fill_rate is critical (guardrails penalize <50% fill rate)
-- Luxury segment has higher margins but lower volume
-- Suppliers are unreliable (80-95% success); order with buffer stock
-- Holding costs accumulate; avoid overstock
-- Price elasticity means demand drops as price rises
+STRATEGY (follow this priority):
+1. ALWAYS order stock if any product has inventory < 10 units. Order 5-10 units.
+2. Fill rate is KING. You MUST keep inventory above 0 to avoid stockouts.
+3. Keep prices moderate (near defaults) unless cash is very low.
+4. During disruptions (disruption_active=true), promote to recover demand.
+5. Spread orders across ALL products, not just one.
+6. Never let cash go below $50 (reserve for emergencies).
 
-Respond with exactly ONE JSON action object. No explanations.
-"""
+Respond with exactly ONE JSON action object. No explanations."""
 
 
 def _safe_json_dict(text: str) -> Optional[Dict[str, Any]]:
@@ -252,23 +253,57 @@ def _build_user_prompt(task_name: str, step: int, observation: Dict[str, Any], h
     cash = float(observation.get("cash", 0.0))
     inventory = observation.get("inventory", {})
     disruption = observation.get("disruption_active", False)
+    stockouts = observation.get("recent_stockouts", {})
+    demand_lux = observation.get("recent_demand_luxury", {})
+    demand_bud = observation.get("recent_demand_budget", {})
 
     lines = [
         f"Task: {task_name} | Day {day} | Cash: ${cash:.2f}",
         f"Disruption Active: {disruption}",
-        "Inventory by product:",
+        "Inventory / Demand / Stockouts:",
     ]
 
+    low_stock_products = []
     for product, qty in inventory.items():
-        lines.append(f"  {product}: {qty} units")
+        lux_d = demand_lux.get(product, 0)
+        bud_d = demand_bud.get(product, 0)
+        total_d = lux_d + bud_d
+        so = stockouts.get(product, 0)
+        warning = " ** LOW STOCK - ORDER NOW **" if qty < 8 else ""
+        lines.append(f"  {product}: {qty} units (demand ~{total_d:.1f}/day, stockouts: {so}){warning}")
+        if qty < 8:
+            low_stock_products.append(product)
+
+    if low_stock_products:
+        lines.append(f"WARNING: {', '.join(low_stock_products)} need restocking immediately!")
 
     lines.append("Recent history (last 3 steps):")
     for h in history[-3:]:
         lines.append(f"  {h}")
 
-    lines.append(f"Step {step}: Choose one action to maximize profit. Prioritize fill rate and revenue.")
+    lines.append(f"Step {step}: Choose one action. ORDER stock for low-inventory products first!")
 
     return "\n".join(lines)
+
+
+def _heuristic_fallback(observation: Dict[str, Any]) -> Dict[str, Any]:
+    """Smart fallback when LLM is unavailable — keeps fill rate healthy."""
+    inventory = observation.get("inventory", {})
+    cash = float(observation.get("cash", 0.0))
+    products = list(inventory.keys())
+    if not products:
+        return {"action": "noop"}
+
+    # Order stock for the product with lowest inventory
+    lowest_product = min(products, key=lambda p: inventory.get(p, 0))
+    lowest_qty = inventory.get(lowest_product, 0)
+
+    if lowest_qty < 15 and cash > 60:
+        order_qty = min(10, int(cash / 6) - 1)
+        if order_qty > 0:
+            return {"action": "order", "product": lowest_product, "quantity": order_qty}
+
+    return {"action": "noop"}
 
 
 def _call_model_action(
@@ -294,11 +329,11 @@ def _call_model_action(
         response_text = completion.choices[0].message.content or ""
     except Exception as e:
         print(f"  Model error: {e}")
-        return {"action": "noop"}
+        return _heuristic_fallback(observation)
 
     parsed = _safe_json_dict(response_text)
     if parsed is None:
-        return {"action": "noop"}
+        return _heuristic_fallback(observation)
 
     return _sanitize_action(parsed, observation)
 
@@ -398,7 +433,7 @@ def main() -> None:
 
     print("\n" + "=" * 60)
     print("MULTI-CHANNEL RETAIL INFERENCE")
-    print("Pipeline: Safety → Router → Retrieval → Reranking → Generation")
+    print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation")
     print("=" * 60)
 
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
