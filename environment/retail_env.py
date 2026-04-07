@@ -10,6 +10,7 @@ from .grader import score_episode
 from .models import (
     AllocateAction,
     ActionType,
+    CompositeAction,
     DisruptionEvent,
     NoOpAction,
     OrderAction,
@@ -31,12 +32,14 @@ def _dump_model(model: Any) -> Dict[str, Any]:
 class MultiChannelRetailEnv:
     """
     Dynamic multi-channel retail with disruption recovery.
-    
+
     Agents manage:
     - Multi-segment pricing (luxury/budget customers)
     - Inventory allocation across segments
     - Supply chain disruptions (lead time, demand shocks)
     - Recovery strategies (promotions, dynamic pricing)
+    - Multi-action timesteps (CompositeAction)
+    - Full pipeline visibility (pending_orders in observation)
     """
 
     def __init__(self, seed: Optional[int] = None):
@@ -49,7 +52,7 @@ class MultiChannelRetailEnv:
         self.initial_cash: float = 0.0
         self._horizon: int = 30
         self.episode_metrics: Dict[str, float] = {}
-        
+
         # Disruption parameters
         self._disruption_probability: float = 0.15
         self._disruption_recovery_days: int = 5
@@ -71,7 +74,7 @@ class MultiChannelRetailEnv:
         # Demand patterns (hidden from agent)
         base_demand_luxury = {p: float(task_config.get("base_demand_luxury", {}).get(p, 1.5)) for p in products}
         base_demand_budget = {p: float(task_config.get("base_demand_budget", {}).get(p, 3.0)) for p in products}
-        
+
         demand_elasticity = {p: float(task_config.get("demand_elasticity", {}).get(p, 1.2)) for p in products}
 
         # Economics
@@ -127,6 +130,7 @@ class MultiChannelRetailEnv:
             cumulative_holding_cost=0.0,
             cumulative_stockouts=0,
             cumulative_demand_lost=0.0,
+            cumulative_order_cost=0.0,
             demand_history_luxury={p: [] for p in products},
             demand_history_budget={p: [] for p in products},
             stockouts_per_product={p: 0 for p in products},
@@ -140,6 +144,7 @@ class MultiChannelRetailEnv:
             "total_revenue": 0.0,
             "total_cost": 0.0,
             "total_holding_cost": 0.0,
+            "total_order_cost": 0.0,
             "profit": 0.0,
             "total_demand": 0.0,
             "total_sales": 0.0,
@@ -155,8 +160,18 @@ class MultiChannelRetailEnv:
 
         return self._get_observation()
 
+    # ── Step (supports both single and composite actions) ───────────
+
     def step(self, action: RetailAction) -> Tuple[RetailObservation, float, bool, Dict[str, Any]]:
-        """Execute one step in the environment."""
+        """Execute one step in the environment.
+
+        Supports both legacy single-action and new CompositeAction payloads.
+        For CompositeAction, sub-actions are resolved in priority order:
+            1. price_changes  (before demand calculation)
+            2. orders         (supply chain)
+            3. allocations    (inventory split)
+            4. promotions     (demand boost)
+        """
         if self.state is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
@@ -164,6 +179,7 @@ class MultiChannelRetailEnv:
             "action_taken": _dump_model(action),
             "valid_action": True,
             "disruption_event": None,
+            "composite": isinstance(action, CompositeAction),
         }
 
         # Check for new disruptions
@@ -180,20 +196,52 @@ class MultiChannelRetailEnv:
             else:
                 self.state.competitor_prices[p] *= random.uniform(0.95, 1.05)
 
-        # Process action
+        # ── Process action(s) ───────────────────────────────────────
         action_reward = 0.0
-        if action.action == ActionType.ALLOCATE:
-            action_reward = self._apply_allocate(action, info)
-        elif action.action == ActionType.SET_PRICE:
-            action_reward = self._apply_set_price(action, info)
-        elif action.action == ActionType.ORDER:
-            action_reward = self._apply_order(action, info)
-        elif action.action == ActionType.PROMOTE:
-            action_reward = self._apply_promote(action, info)
-        elif action.action == ActionType.NOOP:
-            pass
+
+        if isinstance(action, CompositeAction):
+            # Multi-action timestep: execute in priority order
+            sub_infos: List[Dict[str, Any]] = []
+
+            # 1. Price changes first (affect demand calculation)
+            for sub in (action.price_changes or []):
+                sub_info: Dict[str, Any] = {"valid_action": True}
+                action_reward += self._apply_set_price(sub, sub_info)
+                sub_infos.append({"type": "set_price", **sub_info})
+
+            # 2. Orders (supply chain)
+            for sub in (action.orders or []):
+                sub_info = {"valid_action": True}
+                action_reward += self._apply_order(sub, sub_info)
+                sub_infos.append({"type": "order", **sub_info})
+
+            # 3. Allocations
+            for sub in (action.allocations or []):
+                sub_info = {"valid_action": True}
+                action_reward += self._apply_allocate(sub, sub_info)
+                sub_infos.append({"type": "allocate", **sub_info})
+
+            # 4. Promotions
+            for sub in (action.promotions or []):
+                sub_info = {"valid_action": True}
+                action_reward += self._apply_promote(sub, sub_info)
+                sub_infos.append({"type": "promote", **sub_info})
+
+            info["sub_actions"] = sub_infos
         else:
-            info["valid_action"] = False
+            # Legacy single-action path
+            if action.action == ActionType.ALLOCATE:
+                action_reward = self._apply_allocate(action, info)
+            elif action.action == ActionType.SET_PRICE:
+                action_reward = self._apply_set_price(action, info)
+            elif action.action == ActionType.ORDER:
+                action_reward = self._apply_order(action, info)
+            elif action.action == ActionType.PROMOTE:
+                action_reward = self._apply_promote(action, info)
+            elif action.action == ActionType.NOOP:
+                pass
+            else:
+                info["valid_action"] = False
 
         # Process pending order arrivals
         self._realize_arrivals()
@@ -228,6 +276,8 @@ class MultiChannelRetailEnv:
         observation = self._get_observation()
         return observation, total_reward, done, info
 
+    # ── Disruption mechanics ────────────────────────────────────────
+
     def _check_disruptions(self) -> None:
         """Randomly trigger disruptions (supply/demand shocks)."""
         assert self.state is not None
@@ -260,7 +310,7 @@ class MultiChannelRetailEnv:
         """Compute demand multiplier based on active disruptions."""
         if not self.state.active_disruptions:
             return 1.0
-        
+
         # Demand collapses reduce demand, spikes increase it
         multiplier = 1.0
         for disp in self.state.active_disruptions:
@@ -268,13 +318,15 @@ class MultiChannelRetailEnv:
                 multiplier *= (1.0 - disp.severity * 0.8)
             elif disp.event_type == "demand_spike":
                 multiplier *= (1.0 + disp.severity * 1.5)
-        
+
         return max(0.1, min(3.0, multiplier))  # Clamp extremes
+
+    # ── Action handlers ─────────────────────────────────────────────
 
     def _apply_allocate(self, action: RetailAction, info: Dict[str, Any]) -> float:
         """Allocate inventory to luxury and budget segments."""
         assert self.state is not None
-        
+
         if action.product not in self.state.inventory:
             info["valid_action"] = False
             return -1.0
@@ -287,13 +339,13 @@ class MultiChannelRetailEnv:
         # Store allocation for market simulation
         info["allocation_luxury"] = action.luxury_units
         info["allocation_budget"] = action.budget_units
-        
+
         return 0.5  # Small reward for proactive allocation
 
     def _apply_set_price(self, action: RetailAction, info: Dict[str, Any]) -> float:
         """Set price for a segment."""
         assert self.state is not None
-        
+
         if action.product not in self.state.price_bounds:
             info["valid_action"] = False
             return -1.0
@@ -317,7 +369,7 @@ class MultiChannelRetailEnv:
     def _apply_order(self, action: RetailAction, info: Dict[str, Any]) -> float:
         """Place an order with supplier (subject to reliability and lead time)."""
         assert self.state is not None
-        
+
         if action.product not in self.state.inventory:
             info["valid_action"] = False
             return -2.0
@@ -343,6 +395,8 @@ class MultiChannelRetailEnv:
 
         # Deduct cost immediately
         self.state.cash -= cost
+        self.state.cumulative_order_cost += cost
+        self.episode_metrics["total_order_cost"] = self.state.cumulative_order_cost
 
         # Stochastic lead time
         lead_time = max(0, int(np.random.normal(lead_time_mean, lead_time_variance)))
@@ -359,13 +413,14 @@ class MultiChannelRetailEnv:
 
         info["order_enqueued"] = True
         info["arrival_day"] = arrival_day
+        info["lead_time"] = lead_time
         info["supplier"] = supplier_choice
         return 0.0  # Neutral; benefit comes later
 
     def _apply_promote(self, action: RetailAction, info: Dict[str, Any]) -> float:
         """Run a promotional campaign (increases demand at cost)."""
         assert self.state is not None
-        
+
         if action.budget_allocated > self.state.cash:
             info["valid_action"] = False
             return -1.0
@@ -376,10 +431,12 @@ class MultiChannelRetailEnv:
 
         return -action.budget_allocated / 10.0  # Small upfront cost
 
+    # ── Supply chain pipeline ───────────────────────────────────────
+
     def _realize_arrivals(self) -> None:
         """Process pending orders that arrive today."""
         assert self.state is not None
-        
+
         due = self.state.pending_order_queue.pop(self.state.day, {})
         for product, qty in due.items():
             self.state.inventory[product] += int(qty)
@@ -387,12 +444,37 @@ class MultiChannelRetailEnv:
                 0, int(self.state.pending_orders[product]) - int(qty)
             )
 
+    def _build_pending_orders_observation(self) -> Dict[str, list]:
+        """Build agent-visible pending order pipeline from internal queue.
+
+        Transforms the internal {arrival_day: {product: qty}} queue into a
+        per-product list of {quantity, days_to_arrival} dicts that satisfy
+        the Markov property — the agent can now see its own pipeline.
+        """
+        assert self.state is not None
+
+        products = list(self.state.inventory.keys())
+        result: Dict[str, list] = {p: [] for p in products}
+
+        for arrival_day, bucket in sorted(self.state.pending_order_queue.items()):
+            days_to_arrival = max(0, arrival_day - self.state.day)
+            for product, qty in bucket.items():
+                if product in result:
+                    result[product].append({
+                        "quantity": int(qty),
+                        "days_to_arrival": days_to_arrival,
+                    })
+
+        return result
+
+    # ── Market simulation ───────────────────────────────────────────
+
     _DEMAND_HISTORY_WINDOW = 3  # rolling window size for demand history
 
     def _simulate_market(self, disruption_multiplier: float) -> float:
         """Simulate demand, allocations, and sales for each segment."""
         assert self.state is not None
-        
+
         total_revenue = 0.0
         total_demand = 0.0
         total_sales = 0.0
@@ -494,16 +576,16 @@ class MultiChannelRetailEnv:
         """Sample demand with price elasticity and disruptions."""
         rel_price = price / max(0.01, competitor_price)
         price_effect = rel_price ** (-elasticity * 1.5)
-        
+
         effective_demand = base_demand * price_effect * disruption_multiplier
         effective_demand = max(0.1, effective_demand)
-        
+
         return int(np.random.poisson(effective_demand))
 
     def _apply_holding_costs(self) -> float:
         """Apply inventory holding costs."""
         assert self.state is not None
-        
+
         total_cost = 0.0
         for product, qty in self.state.inventory.items():
             cost = float(qty) * self.state.holding_costs[product]
@@ -513,13 +595,13 @@ class MultiChannelRetailEnv:
         self.state.cumulative_holding_cost += total_cost
         self.episode_metrics["total_cost"] += total_cost
         self.episode_metrics["total_holding_cost"] += total_cost
-        
+
         return total_cost
 
     def _finalize_episode(self) -> None:
         """Finalize episode metrics."""
         assert self.state is not None
-        
+
         profit = self.state.cash - self.initial_cash
         self.episode_metrics["profit"] = profit
 
@@ -534,8 +616,10 @@ class MultiChannelRetailEnv:
         else:
             self.episode_metrics["recovery_success_rate"] = 0.0
 
+    # ── Observation builder ─────────────────────────────────────────
+
     def _get_observation(self) -> RetailObservation:
-        """Get partial state observation for agent."""
+        """Get partial state observation for agent (Markov-compliant)."""
         if self.state is None:
             raise RuntimeError("Environment not initialized")
 
@@ -567,10 +651,14 @@ class MultiChannelRetailEnv:
         disruption_severity = max([d.severity for d in self.state.active_disruptions], default=0.0)
         market_confidence = max(0.0, 0.9 - (self.state.day / self._horizon) * 0.3)
 
+        # Build pipeline visibility (Markov property compliance)
+        pending_orders = self._build_pending_orders_observation()
+
         return RetailObservation(
             day=self.state.day,
             cash=self.state.cash,
             inventory=self.state.inventory.copy(),
+            pending_orders=pending_orders,
             recent_demand_luxury=recent_demand_luxury,
             recent_demand_budget=recent_demand_budget,
             recent_stockouts=recent_stockouts,
@@ -587,5 +675,5 @@ class MultiChannelRetailEnv:
         """Get full internal state."""
         if self.state is None:
             raise RuntimeError("Environment not initialized")
-        
+
         return _dump_model(self.state)

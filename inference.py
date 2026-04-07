@@ -42,7 +42,8 @@ from openai import OpenAI
 from environment.tasks import TASKS
 from environment.retail_env import MultiChannelRetailEnv
 from environment.models import (
-    ActionType, AllocateAction, NoOpAction, OrderAction, PromoteAction, SetPriceAction, RetailAction
+    ActionType, AllocateAction, CompositeAction, NoOpAction, OrderAction,
+    PromoteAction, SetPriceAction, RetailAction,
 )
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -131,17 +132,23 @@ async def demo_rag_pipeline():
 # ══════════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = """You are an AI retail manager. Your score depends on THREE factors:
-  50% profit, 30% fill_rate (sales/demand), 20% efficiency.
+  45% profit, 35% fill_rate (sales/demand), 20% efficiency.
   CRITICAL: If fill_rate drops below 60%, your ENTIRE score is HALVED.
+  CRITICAL: If profit is negative, your score is penalised multiplicatively.
+  CRITICAL: Over-ordering (high fill-rate + low efficiency) triggers an exploit penalty.
 
 You operate in a dynamic market with several key factors:
 - Macro Seasonality: Demand trends follow seasonal cycles (e.g., peak on day 15).
-- Adversarial Competitors: Watch competitor_prices. They will fiercely undercut you. Match them for volume or price higher for margin.
+- Adversarial Competitors: Watch competitor_prices. They will fiercely undercut you.
 - Multi-Supplier Sourcing: You must balance cost vs risk.
+- Pipeline Visibility: pending_orders shows incoming shipments per product (quantity + days_to_arrival).
+  Use this to avoid over-ordering — only order what you actually need.
 
-Available actions (pick exactly ONE per step as JSON):
+You can submit EITHER a single action OR a composite action per step:
+
+--- Single Actions ---
 1. {"action": "order", "product": "<name>", "quantity": <int>, "supplier": "A|B"}
-   Order stock. Supplier A: cheap, slow (avg 2 days), 90% reliable. Supplier B: 25% costlier, guaranteed next-day delivery, 100% reliable.
+   Supplier A: cheap, slow (avg 2 days), 90% reliable. Supplier B: 25% costlier, next-day, 100% reliable.
 
 2. {"action": "allocate", "product": "<name>", "luxury_units": <int>, "budget_units": <int>}
    Split inventory between luxury (high-margin) and budget (high-volume) segments.
@@ -150,22 +157,29 @@ Available actions (pick exactly ONE per step as JSON):
    Adjust price to balance elasticity and competitor pressure.
 
 4. {"action": "promote", "product": "<name>", "budget_allocated": <float>}
-   Spend cash to massively boost demand for a product segment.
+   Spend cash to boost demand for a product segment.
 
 5. {"action": "noop"}
    Do nothing this step.
 
-STRATEGY (follow this priority):
-1. ALWAYS order stock if any product has inventory < 10 units. Order 5-10 units.
-2. Fill rate is KING. You MUST keep inventory above 0 to avoid stockouts.
-3. Keep prices moderate (near defaults) unless cash is very low.
-4. During disruptions (disruption_active=true), promote to recover demand.
-5. Spread orders across ALL products, not just one.
-6. Never let cash go below $50 (reserve for emergencies).
+--- Composite Action (preferred for advanced play) ---
+6. {"action": "composite", "orders": [...], "price_changes": [...], "allocations": [...], "promotions": [...]}
+   Execute MULTIPLE actions in one timestep (e.g. restock 2 products AND adjust a price).
+   Sub-actions are arrays of the single-action formats above (without the outer "action" key).
+   Omit empty arrays.
 
-You MUST respond with exactly ONE JSON object containing both your reasoning and your chosen action. Do not include any text outside the JSON. Format:
+STRATEGY (follow this priority):
+1. CHECK pending_orders before ordering. If shipments are arriving in 1-2 days, WAIT.
+2. Fill rate is KING. Keep inventory above 0 to avoid stockouts.
+3. Use composite actions to order multiple low-stock products in one step.
+4. Keep prices moderate unless cash is critically low.
+5. During disruptions (disruption_active=true), consider promoting to recover demand.
+6. Never let cash go below $50 (reserve for emergencies).
+7. Do NOT over-order. Efficiency matters — excess inventory incurs holding costs.
+
+Respond with exactly ONE JSON object. No text outside the JSON. Format:
 {
-  "reasoning": "Step-by-step logic detailing why you chose this action based on inventory, cash, and disruptions.",
+  "reasoning": "Step-by-step logic based on inventory, pending_orders, cash, and disruptions.",
   "action": {
     "action": "...",
     ...
@@ -281,11 +295,12 @@ def _build_user_prompt(task_name: str, step: int, observation: Dict[str, Any], h
     stockouts = observation.get("recent_stockouts", {})
     demand_lux = observation.get("recent_demand_luxury", {})
     demand_bud = observation.get("recent_demand_budget", {})
+    pending = observation.get("pending_orders", {})
 
     lines = [
         f"Task: {task_name} | Day {day} | Cash: ${cash:.2f}",
         f"Disruption Active: {disruption}",
-        "Inventory / Demand / Stockouts:",
+        "Inventory / Demand / Stockouts / Pipeline:",
     ]
 
     low_stock_products = []
@@ -294,9 +309,16 @@ def _build_user_prompt(task_name: str, step: int, observation: Dict[str, Any], h
         bud_d = demand_bud.get(product, 0)
         total_d = lux_d + bud_d
         so = stockouts.get(product, 0)
-        warning = " ** LOW STOCK - ORDER NOW **" if qty < 8 else ""
-        lines.append(f"  {product}: {qty} units (demand ~{total_d:.1f}/day, stockouts: {so}){warning}")
-        if qty < 8:
+
+        # Pipeline info
+        pipeline = pending.get(product, [])
+        pipeline_qty = sum(s.get("quantity", 0) for s in pipeline) if pipeline else 0
+        pipe_str = f", incoming: {pipeline_qty}" if pipeline_qty > 0 else ""
+
+        effective = qty + pipeline_qty
+        warning = " ** LOW STOCK - ORDER NOW **" if effective < 8 else ""
+        lines.append(f"  {product}: {qty} on-hand{pipe_str} (demand ~{total_d:.1f}/day, stockouts: {so}){warning}")
+        if effective < 8:
             low_stock_products.append(product)
 
     if low_stock_products:
@@ -306,29 +328,56 @@ def _build_user_prompt(task_name: str, step: int, observation: Dict[str, Any], h
     for h in history[-5:]:
         lines.append(f"  {h}")
 
-    lines.append(f"Step {step}: Choose one action using the structured JSON format with reasoning. ORDER stock for low-inventory products first!")
+    lines.append(f"Step {step}: Choose an action (single or composite). Prioritise ordering low-stock products. Consider composite actions to order multiple products at once.")
 
     return "\n".join(lines)
 
 
 def _heuristic_fallback(observation: Dict[str, Any]) -> Dict[str, Any]:
-    """Smart fallback when LLM is unavailable — keeps fill rate healthy."""
+    """Smart fallback when LLM is unavailable — uses composite actions.
+
+    Uses pending_orders pipeline to avoid over-ordering, and batches
+    multiple restocking orders into a single composite action.
+    """
     inventory = observation.get("inventory", {})
     cash = float(observation.get("cash", 0.0))
+    pending = observation.get("pending_orders", {})
     products = list(inventory.keys())
     if not products:
         return {"action": "noop"}
 
-    # Order stock for the product with lowest inventory
-    lowest_product = min(products, key=lambda p: inventory.get(p, 0))
-    lowest_qty = inventory.get(lowest_product, 0)
+    # Calculate effective stock (on-hand + incoming pipeline)
+    effective_stock = {}
+    for p in products:
+        pipeline_qty = sum(s.get("quantity", 0) for s in pending.get(p, []))
+        effective_stock[p] = inventory.get(p, 0) + pipeline_qty
 
-    if lowest_qty < 15 and cash > 60:
-        order_qty = min(10, int(cash / 6) - 1)
-        if order_qty > 0:
-            return {"action": "order", "product": lowest_product, "quantity": order_qty}
+    # Find all products that need restocking
+    orders_needed = []
+    budget_per_order = 6.0  # estimated unit cost
+    remaining_cash = cash - 50.0  # keep $50 reserve
 
-    return {"action": "noop"}
+    for p in sorted(products, key=lambda x: effective_stock[x]):
+        if effective_stock[p] < 15 and remaining_cash > budget_per_order * 3:
+            order_qty = min(8, int(remaining_cash / budget_per_order) - 1)
+            if order_qty > 0:
+                orders_needed.append({"action": "order", "product": p, "quantity": order_qty})
+                remaining_cash -= order_qty * budget_per_order
+
+    if not orders_needed:
+        return {"action": "noop"}
+
+    if len(orders_needed) == 1:
+        return orders_needed[0]
+
+    # Use composite action to batch multiple orders
+    return {
+        "action": "composite",
+        "orders": orders_needed,
+        "price_changes": [],
+        "allocations": [],
+        "promotions": [],
+    }
 
 
 def _call_model_action(
@@ -370,6 +419,8 @@ def _call_model_action(
 def _local_parse_action(payload: Dict[str, Any]) -> 'RetailAction':
     action_type = payload.get("action", "noop").lower()
     try:
+        if action_type == ActionType.COMPOSITE.value:
+            return CompositeAction(**payload)
         if action_type == ActionType.ALLOCATE.value:
             return AllocateAction(**payload)
         if action_type == ActionType.SET_PRICE.value:

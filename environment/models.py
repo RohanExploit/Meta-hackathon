@@ -12,6 +12,7 @@ class ActionType(str, Enum):
     ORDER = "order"                # Order from supplier
     PROMOTE = "promote"            # Run a promotion (budget-limited)
     NOOP = "noop"                  # Do nothing
+    COMPOSITE = "composite"        # Multiple actions in one timestep
 
 
 class AllocateAction(BaseModel):
@@ -50,27 +51,72 @@ class NoOpAction(BaseModel):
     action: ActionType = ActionType.NOOP
 
 
-RetailAction = Union[AllocateAction, SetPriceAction, OrderAction, PromoteAction, NoOpAction]
+class CompositeAction(BaseModel):
+    """Execute multiple actions in a single timestep.
 
+    Allows agents to perform realistic parallel decisions: e.g. place
+    an order AND adjust prices in the same logical day.  Sub-actions are
+    resolved in this priority order:
+        1. price_changes  (applied before demand is calculated)
+        2. orders         (supply chain)
+        3. allocations    (inventory split)
+        4. promotions     (demand boost)
+    """
+    action: ActionType = ActionType.COMPOSITE
+    orders: Optional[List[OrderAction]] = Field(default_factory=list)
+    price_changes: Optional[List[SetPriceAction]] = Field(default_factory=list)
+    allocations: Optional[List[AllocateAction]] = Field(default_factory=list)
+    promotions: Optional[List[PromoteAction]] = Field(default_factory=list)
+
+
+RetailAction = Union[
+    AllocateAction,
+    SetPriceAction,
+    OrderAction,
+    PromoteAction,
+    NoOpAction,
+    CompositeAction,
+]
+
+
+# ── Pending Shipment (visible to agent) ─────────────────────────────
+
+class PendingShipment(BaseModel):
+    """A single incoming shipment the agent can observe."""
+    quantity: int
+    days_to_arrival: int
+
+
+# ── Observation ─────────────────────────────────────────────────────
 
 class RetailObservation(BaseModel):
-    """Partial state visible to agent."""
+    """Partial state visible to agent (Markov-compliant)."""
     day: int
     cash: float
-    
+
     # Inventory by product
     inventory: Dict[str, int]
-    
+
+    # Pipeline visibility — satisfies the Markov property
+    pending_orders: Dict[str, List[Dict[str, int]]] = Field(
+        default_factory=dict,
+        description=(
+            "Pending shipments per product. Each entry contains "
+            "'quantity' and 'days_to_arrival'. Enables optimal "
+            "inventory decisions under stochastic lead times."
+        ),
+    )
+
     # Recent market signals (last 3 days avg)
     recent_demand_luxury: Dict[str, float]
     recent_demand_budget: Dict[str, float]
     recent_stockouts: Dict[str, int]  # Count by product
-    
+
     # Current prices
     prices_luxury: Dict[str, float]
     prices_budget: Dict[str, float]
     competitor_prices: Dict[str, float]
-    
+
     # Market conditions
     disruption_active: bool
     disruption_severity: float  # 0.0-1.0
@@ -92,35 +138,35 @@ class RetailState(BaseModel):
     day: int
     cash: float
     inventory: Dict[str, int]
-    
+
     # Underlying demand patterns (hidden from agent)
     base_demand_luxury: Dict[str, float]
     base_demand_budget: Dict[str, float]
     demand_elasticity: Dict[str, float]  # Price sensitivity
-    
+
     # Current prices by segment
     prices_luxury: Dict[str, float]
     prices_budget: Dict[str, float]
     competitor_prices: Dict[str, float]
     price_bounds: Dict[str, Dict[str, float]]  # min/max per product
-    
+
     # Product economics
     product_costs: Dict[str, float]
     holding_costs: Dict[str, float]
     max_inventory: Dict[str, float]
-    
+
     # Supply chain
     lead_time_mean: int
     lead_time_variance: int
     pending_orders: Dict[str, int]
     pending_order_queue: Dict[int, Dict[str, int]]
     supplier_reliability: float  # 0.0-1.0, chance orders arrive on time
-    
+
     # Disruptions
     active_disruptions: List[DisruptionEvent]
     disruption_history: List[DisruptionEvent]
     next_disruption_day: Optional[int]
-    
+
     # Metrics (for grading)
     cumulative_sales_luxury: Dict[str, float]
     cumulative_sales_budget: Dict[str, float]
@@ -128,6 +174,7 @@ class RetailState(BaseModel):
     cumulative_holding_cost: float
     cumulative_stockouts: int
     cumulative_demand_lost: float
+    cumulative_order_cost: float = 0.0  # Total spent on orders (for efficiency)
 
     # Realtime demand history (rolling window, last 3 steps per product)
     demand_history_luxury: Dict[str, List[float]] = Field(default_factory=dict)

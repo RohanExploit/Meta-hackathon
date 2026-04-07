@@ -16,6 +16,7 @@ from environment.grader import evaluate_seeded_summaries, score_episode
 from environment.models import (
     ActionType,
     AllocateAction,
+    CompositeAction,
     NoOpAction,
     OrderAction,
     PromoteAction,
@@ -65,7 +66,11 @@ class LiveStopRequest(BaseModel):
 
 
 def _parse_action(payload: Dict[str, Any]) -> RetailAction:
-    """Parse action from JSON payload."""
+    """Parse action from JSON payload.
+
+    Supports both legacy single actions and the new CompositeAction
+    format that allows multiple actions per timestep.
+    """
     if not isinstance(payload, dict):
         raise ValueError("Action must be a JSON object")
 
@@ -76,6 +81,8 @@ def _parse_action(payload: Dict[str, Any]) -> RetailAction:
     action_value = str(action_type).strip().lower()
 
     try:
+        if action_value == ActionType.COMPOSITE.value:
+            return CompositeAction(**payload)
         if action_value == ActionType.ALLOCATE.value:
             return AllocateAction(**payload)
         if action_value == ActionType.SET_PRICE.value:
