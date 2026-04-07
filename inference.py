@@ -40,6 +40,12 @@ import requests
 from openai import OpenAI
 
 from environment.tasks import TASKS
+from environment.retail_env import MultiChannelRetailEnv
+from environment.models import (
+    ActionType, AllocateAction, NoOpAction, OrderAction, PromoteAction, SetPriceAction, RetailAction
+)
+import argparse
+from concurrent.futures import ThreadPoolExecutor
 
 # NOTE: Pipeline imports are lazy (inside demo_rag_pipeline) to avoid
 # breaking inference.py when RAG dependencies aren't installed.
@@ -60,7 +66,7 @@ MODEL_NAME = os.getenv("MODEL_NAME")
 HF_TOKEN = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 TEMPERATURE = 0.0
-MAX_TOKENS = 300
+MAX_TOKENS = 600
 REQUEST_TIMEOUT = 30
 
 
@@ -128,18 +134,23 @@ SYSTEM_PROMPT = """You are an AI retail manager. Your score depends on THREE fac
   50% profit, 30% fill_rate (sales/demand), 20% efficiency.
   CRITICAL: If fill_rate drops below 60%, your ENTIRE score is HALVED.
 
+You operate in a dynamic market with several key factors:
+- Macro Seasonality: Demand trends follow seasonal cycles (e.g., peak on day 15).
+- Adversarial Competitors: Watch competitor_prices. They will fiercely undercut you. Match them for volume or price higher for margin.
+- Multi-Supplier Sourcing: You must balance cost vs risk.
+
 Available actions (pick exactly ONE per step as JSON):
-1. {"action": "order", "product": "<name>", "quantity": <int>}
-   Order stock from supplier. Cost is ~$5-6/unit. Lead time 1-2 days.
+1. {"action": "order", "product": "<name>", "quantity": <int>, "supplier": "A|B"}
+   Order stock. Supplier A: cheap, slow (avg 2 days), 90% reliable. Supplier B: 25% costlier, guaranteed next-day delivery, 100% reliable.
 
 2. {"action": "allocate", "product": "<name>", "luxury_units": <int>, "budget_units": <int>}
    Split inventory between luxury (high-margin) and budget (high-volume) segments.
 
 3. {"action": "set_price", "product": "<name>", "segment": "luxury|budget", "new_price": <float>}
-   Adjust price. Higher price = fewer sales but more revenue per unit.
+   Adjust price to balance elasticity and competitor pressure.
 
 4. {"action": "promote", "product": "<name>", "budget_allocated": <float>}
-   Spend cash to boost demand. Use during disruptions.
+   Spend cash to massively boost demand for a product segment.
 
 5. {"action": "noop"}
    Do nothing this step.
@@ -152,7 +163,14 @@ STRATEGY (follow this priority):
 5. Spread orders across ALL products, not just one.
 6. Never let cash go below $50 (reserve for emergencies).
 
-Respond with exactly ONE JSON action object. No explanations."""
+You MUST respond with exactly ONE JSON object containing both your reasoning and your chosen action. Do not include any text outside the JSON. Format:
+{
+  "reasoning": "Step-by-step logic detailing why you chose this action based on inventory, cash, and disruptions.",
+  "action": {
+    "action": "...",
+    ...
+  }
+}"""
 
 
 def _safe_json_dict(text: str) -> Optional[Dict[str, Any]]:
@@ -284,11 +302,11 @@ def _build_user_prompt(task_name: str, step: int, observation: Dict[str, Any], h
     if low_stock_products:
         lines.append(f"WARNING: {', '.join(low_stock_products)} need restocking immediately!")
 
-    lines.append("Recent history (last 3 steps):")
-    for h in history[-3:]:
+    lines.append("Episode Memory (last 5 steps):")
+    for h in history[-5:]:
         lines.append(f"  {h}")
 
-    lines.append(f"Step {step}: Choose one action. ORDER stock for low-inventory products first!")
+    lines.append(f"Step {step}: Choose one action using the structured JSON format with reasoning. ORDER stock for low-inventory products first!")
 
     return "\n".join(lines)
 
@@ -342,8 +360,28 @@ def _call_model_action(
     if parsed is None:
         return _heuristic_fallback(observation)
 
-    return _sanitize_action(parsed, observation)
+    action_dict = parsed.get("action", parsed) if isinstance(parsed, dict) else parsed
+    if not isinstance(action_dict, dict):
+        action_dict = {"action": "noop"}
 
+    return _sanitize_action(action_dict, observation)
+
+
+def _local_parse_action(payload: Dict[str, Any]) -> 'RetailAction':
+    action_type = payload.get("action", "noop").lower()
+    try:
+        if action_type == ActionType.ALLOCATE.value:
+            return AllocateAction(**payload)
+        if action_type == ActionType.SET_PRICE.value:
+            return SetPriceAction(**payload)
+        if action_type == ActionType.ORDER.value:
+            return OrderAction(**payload)
+        if action_type == ActionType.PROMOTE.value:
+            return PromoteAction(**payload)
+        return NoOpAction(**payload)
+    except Exception as e:
+        print(f"Action parse error: {e}")
+        return NoOpAction(action="noop")
 
 def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Post JSON to environment server."""
@@ -356,23 +394,30 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return response.json()
 
 
-def run_task(client: OpenAI, task_name: str) -> Dict[str, Any]:
+def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[str, Any]:
     """Run a single task and collect results."""
     task_cfg = TASKS[task_name]
+    
+    if use_local:
+        env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
+        obs_obj = env.reset(task_cfg)
+        observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
+        done = False
+        final_info: Dict[str, Any] = {}
+        total_reward = 0.0
+    else:
+        reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
+        reset_out = _post_json("/reset", reset_payload)
+        observation = reset_out.get("observation", {})
+        done = bool(reset_out.get("done", False))
+        final_info = reset_out.get("info", {})
+        total_reward = 0.0
 
-    reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
-    reset_out = _post_json("/reset", reset_payload)
-
-    observation = reset_out.get("observation", {})
-    done = bool(reset_out.get("done", False))
-    total_reward = 0.0
     history: List[str] = []
-    final_info: Dict[str, Any] = {}
-
     max_steps = int(task_cfg.get("horizon", 30))
 
     print(f"\n{'=' * 60}")
-    print(f"Running task: {task_name} (horizon={max_steps})")
+    print(f"Running task: {task_name} (horizon={max_steps}, mode={'local' if use_local else 'remote'})")
     print(f"{'=' * 60}")
 
     for step in range(1, max_steps + 1):
@@ -383,19 +428,42 @@ def run_task(client: OpenAI, task_name: str) -> Dict[str, Any]:
         action = _call_model_action(client, task_name, step, observation, history)
 
         try:
-            step_out = _post_json("/step", {"action": action})
+            if use_local:
+                parsed_action = _local_parse_action(action)
+                obs_tuple = env.step(parsed_action)
+                obs_obj, reward, done, info = obs_tuple
+                
+                observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
+                reward = float(reward)
+                done = bool(done)
+                info = info or {}
+            else:
+                step_out = _post_json("/step", {"action": action})
+                observation = step_out.get("observation", {})
+                reward = float(step_out.get("reward", 0.0))
+                done = bool(step_out.get("done", False))
+                info = step_out.get("info", {}) or {}
         except Exception as e:
             print(f"  Step error: {e}")
-            step_out = _post_json("/step", {"action": {"action": "noop"}})
             action = {"action": "noop"}
-
-        observation = step_out.get("observation", {})
-        reward = float(step_out.get("reward", 0.0))
-        done = bool(step_out.get("done", False))
-        info = step_out.get("info", {}) or {}
+            if use_local:
+                obs_tuple = env.step(NoOpAction(action="noop"))
+                observation = obs_tuple[0].model_dump()
+                reward = float(obs_tuple[1])
+                done = bool(obs_tuple[2])
+                info = obs_tuple[3] or {}
+            else:
+                step_out = _post_json("/step", {"action": {"action": "noop"}})
+                observation = step_out.get("observation", {})
+                reward = float(step_out.get("reward", 0.0))
+                done = bool(step_out.get("done", False))
+                info = step_out.get("info", {}) or {}
 
         total_reward += reward
-        history.append(f"step={step}, action={action.get('action')}, reward={reward:.2f}")
+        step_reasoning = action.get("reasoning", "")[:50]
+        action_type = action.get("action", "noop")
+        product = action.get("product", "None")
+        history.append(f"Day {observation.get('day', 0)}: Chose {action_type} on {product} | Reward: {reward:.2f} | Stockouts: {sum(observation.get('recent_stockouts', {}).values())}")
         final_info = info
 
         if step % 5 == 0 or done:
@@ -424,12 +492,15 @@ def run_task(client: OpenAI, task_name: str) -> Dict[str, Any]:
 
 # ── Main Entry Point ────────────────────────────────────────────────
 
-def main() -> None:
-    """Run all tasks and optionally demo the RAG pipeline."""
+async def run_task_async(client: OpenAI, task_name: str, use_local: bool) -> Dict[str, Any]:
+    """Run a task asynchronously in a separate thread so we can parallelize."""
+    return await asyncio.to_thread(run_task, client, task_name, use_local)
 
+
+async def async_main(args) -> None:
     # Check if we should demo the RAG pipeline
-    if "--rag-demo" in sys.argv:
-        asyncio.run(demo_rag_pipeline())
+    if args.rag_demo:
+        await demo_rag_pipeline()
         return
 
     # Otherwise, run the OpenEnv retail agent
@@ -439,24 +510,41 @@ def main() -> None:
         raise ValueError("OPENAI_API_KEY (or HF_TOKEN / API_KEY) is required")
 
     print("\n" + "=" * 60)
-    print("MULTI-CHANNEL RETAIL INFERENCE")
+    print(f"MULTI-CHANNEL RETAIL INFERENCE (PARALLEL, workers={args.parallel})")
     print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation")
     print("=" * 60)
 
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    task_order = ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
-    results: List[Dict[str, Any]] = []
+    # Use specified tasks or fallback to defaults
+    tasks_to_run = [t for t in args.tasks if t in TASKS]
+    if not tasks_to_run:
+        print("No valid tasks found to run.")
+        return
 
-    for task_name in task_order:
-        if task_name not in TASKS:
-            continue
-        try:
-            result = run_task(client, task_name)
+    # Run tasks in parallel
+    print(f"Starting {len(tasks_to_run)} tasks in parallel...")
+    
+    # We can use asyncio.gather with the specified concurrency limit
+    semaphore = asyncio.Semaphore(args.parallel)
+    
+    async def _sem_run(task_name):
+        async with semaphore:
+            return await run_task_async(client, task_name, args.local)
+
+    coroutines = [_sem_run(task_name) for task_name in tasks_to_run]
+    results_raw = await asyncio.gather(*coroutines, return_exceptions=True)
+
+    results: List[Dict[str, Any]] = []
+    
+    # Process results sequentially to keep summary clean
+    for idx, result in enumerate(results_raw):
+        task_name = tasks_to_run[idx]
+        if isinstance(result, Exception):
+            print(f"\n  [FAIL] {task_name:20s} failed: {result}")
+        else:
             results.append(result)
             print(f"\n  [OK] {task_name:20s} score={result['score']:.4f} reward={result['total_reward']:8.2f}")
-        except Exception as e:
-            print(f"\n  [FAIL] {task_name:20s} failed: {e}")
 
     if results:
         mean_score = sum(r["score"] for r in results) / len(results)
@@ -466,6 +554,18 @@ def main() -> None:
         print(json.dumps({"results": results, "mean_score": mean_score}, indent=2))
     else:
         print("\nNo tasks completed successfully.")
+
+
+def main() -> None:
+    """Run all tasks and optionally demo the RAG pipeline."""
+    parser = argparse.ArgumentParser(description="Multi-Channel Retail Inference")
+    parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
+    parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
+    parser.add_argument("--parallel", type=int, default=5, help="Number of environments to evaluate concurrently")
+    parser.add_argument("--tasks", type=str, nargs="+", default=["easy", "medium_simple", "medium_challenge", "hard", "expert"], help="Tasks to run")
+    args = parser.parse_args()
+
+    asyncio.run(async_main(args))
 
 
 if __name__ == "__main__":

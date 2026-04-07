@@ -92,6 +92,7 @@ class MultiChannelRetailEnv:
         # Initial prices
         prices_luxury = {p: float(task_config.get("initial_prices_luxury", {}).get(p, product_costs[p] * 2.0)) for p in products}
         prices_budget = {p: float(task_config.get("initial_prices_budget", {}).get(p, product_costs[p] * 1.3)) for p in products}
+        competitor_prices = {p: prices_budget[p] * 0.95 for p in products}
 
         # Supply chain
         lead_time_mean = int(task_config.get("lead_time_mean", 2))
@@ -107,6 +108,7 @@ class MultiChannelRetailEnv:
             demand_elasticity=demand_elasticity,
             prices_luxury=prices_luxury,
             prices_budget=prices_budget,
+            competitor_prices=competitor_prices,
             price_bounds=price_bounds,
             product_costs=product_costs,
             holding_costs=holding_costs,
@@ -169,6 +171,14 @@ class MultiChannelRetailEnv:
 
         # Apply disruption effects to demand
         disruption_multiplier = self._compute_disruption_multiplier()
+
+        # Update competitor prices
+        for p in self.state.inventory.keys():
+            my_bdg = self.state.prices_budget[p]
+            if self.state.competitor_prices[p] > my_bdg:
+                self.state.competitor_prices[p] = max(self.state.product_costs[p] * 1.05, my_bdg * 0.95)
+            else:
+                self.state.competitor_prices[p] *= random.uniform(0.95, 1.05)
 
         # Process action
         action_reward = 0.0
@@ -312,7 +322,21 @@ class MultiChannelRetailEnv:
             info["valid_action"] = False
             return -2.0
 
-        cost = float(action.quantity) * self.state.product_costs[action.product]
+        supplier_choice = getattr(action, "supplier", "A").upper()
+        if supplier_choice == "B":
+            # Fast, reliable, expensive
+            unit_cost = self.state.product_costs[action.product] * 1.25
+            lead_time_mean = 1
+            lead_time_variance = 0
+            reliability = 1.0
+        else:
+            # Slow, cheap, unreliable
+            unit_cost = self.state.product_costs[action.product]
+            lead_time_mean = self.state.lead_time_mean
+            lead_time_variance = self.state.lead_time_variance
+            reliability = self.state.supplier_reliability
+
+        cost = float(action.quantity) * unit_cost
         if cost > self.state.cash:
             info["valid_action"] = False
             return -2.0
@@ -321,11 +345,11 @@ class MultiChannelRetailEnv:
         self.state.cash -= cost
 
         # Stochastic lead time
-        lead_time = max(0, int(np.random.normal(self.state.lead_time_mean, self.state.lead_time_variance)))
+        lead_time = max(0, int(np.random.normal(lead_time_mean, lead_time_variance)))
         arrival_day = self.state.day + lead_time
 
         # Chance order doesn't arrive (supplier unreliability)
-        if random.random() > self.state.supplier_reliability:
+        if random.random() > reliability:
             info["order_lost"] = True
             return -1.0  # Penalty for lost order
 
@@ -335,6 +359,7 @@ class MultiChannelRetailEnv:
 
         info["order_enqueued"] = True
         info["arrival_day"] = arrival_day
+        info["supplier"] = supplier_choice
         return 0.0  # Neutral; benefit comes later
 
     def _apply_promote(self, action: RetailAction, info: Dict[str, Any]) -> float:
@@ -373,21 +398,26 @@ class MultiChannelRetailEnv:
         total_sales = 0.0
         step_unmet = 0  # Track unmet demand for THIS step only
 
+        seasonality_trend = 1.0 + 0.5 * np.sin(self.state.day / self._horizon * np.pi)
+
         for product in self.state.inventory.keys():
+            comp_price = self.state.competitor_prices[product]
             # Base demand
             demand_lux = self._sample_demand(
                 self.state.base_demand_luxury[product],
                 self.state.prices_luxury[product],
                 self.state.product_costs[product],
                 self.state.demand_elasticity[product],
-                disruption_multiplier,
+                disruption_multiplier * seasonality_trend,
+                comp_price * 1.3,
             )
             demand_bdg = self._sample_demand(
                 self.state.base_demand_budget[product],
                 self.state.prices_budget[product],
                 self.state.product_costs[product],
                 self.state.demand_elasticity[product],
-                disruption_multiplier,
+                disruption_multiplier * seasonality_trend,
+                comp_price,
             )
 
             # Record actual demand in rolling history for realistic observations
@@ -459,12 +489,11 @@ class MultiChannelRetailEnv:
         product_cost: float,
         elasticity: float,
         disruption_multiplier: float,
+        competitor_price: float,
     ) -> int:
         """Sample demand with price elasticity and disruptions."""
-        # Reference price is the product cost * 1.5 (a "fair" markup)
-        reference_price = max(0.01, product_cost * 1.5)
-        price_ratio = price / reference_price
-        price_effect = price_ratio ** (-elasticity)
+        rel_price = price / max(0.01, competitor_price)
+        price_effect = rel_price ** (-elasticity * 1.5)
         
         effective_demand = base_demand * price_effect * disruption_multiplier
         effective_demand = max(0.1, effective_demand)
@@ -547,9 +576,11 @@ class MultiChannelRetailEnv:
             recent_stockouts=recent_stockouts,
             prices_luxury=self.state.prices_luxury.copy(),
             prices_budget=self.state.prices_budget.copy(),
+            competitor_prices=self.state.competitor_prices.copy(),
             disruption_active=disruption_active,
             disruption_severity=disruption_severity,
             market_confidence=market_confidence,
+            seasonality_multiplier=1.0 + 0.5 * np.sin(self.state.day / self._horizon * np.pi),
         )
 
     def get_state(self) -> Dict[str, Any]:

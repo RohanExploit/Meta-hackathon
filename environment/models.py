@@ -35,6 +35,7 @@ class OrderAction(BaseModel):
     action: ActionType = ActionType.ORDER
     product: str
     quantity: int = Field(gt=0)
+    supplier: str = "A"  # "A" for cheap/slow/unreliable, "B" for fast/reliable/expensive
 
 
 class PromoteAction(BaseModel):
@@ -68,11 +69,13 @@ class RetailObservation(BaseModel):
     # Current prices
     prices_luxury: Dict[str, float]
     prices_budget: Dict[str, float]
+    competitor_prices: Dict[str, float]
     
     # Market conditions
     disruption_active: bool
     disruption_severity: float  # 0.0-1.0
     market_confidence: float    # 0.0-1.0 (agent hasn't seen true demand pattern)
+    seasonality_multiplier: float  # Effect of current season/weekend on demand
 
 
 class DisruptionEvent(BaseModel):
@@ -98,6 +101,7 @@ class RetailState(BaseModel):
     # Current prices by segment
     prices_luxury: Dict[str, float]
     prices_budget: Dict[str, float]
+    competitor_prices: Dict[str, float]
     price_bounds: Dict[str, Dict[str, float]]  # min/max per product
     
     # Product economics
