@@ -9,6 +9,7 @@ description = "OpenEnv compliant multi-channel retail with NVIDIA-inspired RAG p
 authors = [{name = "OpenEnv Hackathon"}]
 dependencies = [
     # ── Core server ──────────────────────────────────────────────
+    "openenv-core>=0.2.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "pydantic>=2.0.0",
