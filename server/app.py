@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
@@ -235,9 +235,22 @@ live_runner = LiveRunner(env, env_lock)
 
 
 @app.post("/reset")
-async def reset_environment(request: ResetRequest = Body(default=ResetRequest())):
-    """Reset the environment."""
+async def reset_environment(raw_request: Request):
+    """Reset the environment.
+
+    Accepts POST with any body (JSON, empty, or null) per OpenEnv spec.
+    """
     try:
+        body = await raw_request.body()
+        if body and body.strip():
+            try:
+                data = json.loads(body)
+                request = ResetRequest(**(data if isinstance(data, dict) else {}))
+            except (json.JSONDecodeError, ValidationError):
+                request = ResetRequest()
+        else:
+            request = ResetRequest()
+
         with env_lock:
             task_config = _resolve_task_config(request)
             if request.seed is not None:
@@ -261,9 +274,22 @@ async def reset_environment(request: ResetRequest = Body(default=ResetRequest())
 
 
 @app.post("/step")
-async def step_environment(request: StepRequest = Body(default=StepRequest(action={"action": "noop"}))):
-    """Take a step in the environment."""
+async def step_environment(raw_request: Request):
+    """Take a step in the environment.
+
+    Accepts POST with any body (JSON, empty, or null) per OpenEnv spec.
+    """
     try:
+        body = await raw_request.body()
+        if body and body.strip():
+            try:
+                data = json.loads(body)
+                request = StepRequest(**(data if isinstance(data, dict) else {"action": {"action": "noop"}}))
+            except (json.JSONDecodeError, ValidationError):
+                request = StepRequest(action={"action": "noop"})
+        else:
+            request = StepRequest(action={"action": "noop"})
+
         with env_lock:
             action = _parse_action(request.action)
             observation, reward, done, info = env.step(action)
