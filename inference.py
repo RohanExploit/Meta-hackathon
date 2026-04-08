@@ -61,10 +61,12 @@ logger = logging.getLogger(__name__)
 
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 
-# Legacy env vars for OpenAI-compatible inference (hackathon requirement)
+# OpenAI-compatible inference env vars (hackathon requirement)
+# Defaults are set ONLY for API_BASE_URL and MODEL_NAME — NOT for HF_TOKEN
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME")
-HF_TOKEN = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # Optional: used with from_docker_image()
 
 TEMPERATURE = 0.0
 MAX_TOKENS = 600
@@ -470,10 +472,12 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
     print(f"\n{'=' * 60}")
     print(f"Running task: {task_name} (horizon={max_steps}, mode={'local' if use_local else 'remote'})")
     print(f"{'=' * 60}")
+    print("START", flush=True)  # Required structured log format
 
     for step in range(1, max_steps + 1):
         if done:
             print(f"Episode ended early at step {step}")
+            print("END", flush=True)  # Required structured log format
             break
 
         action = _call_model_action(client, task_name, step, observation, history)
@@ -517,9 +521,14 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
         history.append(f"Day {observation.get('day', 0)}: Chose {action_type} on {product} | Reward: {reward:.2f} | Stockouts: {sum(observation.get('recent_stockouts', {}).values())}")
         final_info = info
 
+        # Required structured log format: one STEP line per timestep
+        print(f"STEP {step}", flush=True)
+
         if step % 5 == 0 or done:
             cash = observation.get("cash", 0)
             print(f"  Step {step:2d}: action={action.get('action'):8s} | reward={reward:7.2f} | cash=${cash:8.2f}")
+
+    print("END", flush=True)  # Required structured log format
 
     grader = {}
     if isinstance(final_info, dict):
@@ -555,10 +564,8 @@ async def async_main(args) -> None:
         return
 
     # Otherwise, run the OpenEnv retail agent
-    if not MODEL_NAME:
-        raise ValueError("MODEL_NAME is required (set via environment variable)")
     if not HF_TOKEN:
-        raise ValueError("OPENAI_API_KEY (or HF_TOKEN / API_KEY) is required")
+        raise ValueError("HF_TOKEN is required (set via environment variable)")
 
     print("\n" + "=" * 60)
     print(f"MULTI-CHANNEL RETAIL INFERENCE (PARALLEL, workers={args.parallel})")

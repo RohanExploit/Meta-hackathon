@@ -48,13 +48,14 @@ def _check_task_count() -> tuple[bool, str]:
 
 
 def _check_inference_contract() -> tuple[bool, str]:
-    required = ["API_BASE_URL", "MODEL_NAME"]
-    missing = [name for name in required if not os.getenv(name)]
-    if not (os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")):
-        missing.append("OPENAI_API_KEY (or HF_TOKEN/API_KEY)")
+    # Checklist rule: only HF_TOKEN is the required auth var (no fallbacks)
+    missing = []
+    if not os.getenv("HF_TOKEN"):
+        missing.append("HF_TOKEN")
+    # API_BASE_URL and MODEL_NAME have defaults set in inference.py, so env vars are optional
     if missing:
-        return False, f"Missing env vars for inference: {', '.join(missing)}"
-    return True, "Inference env vars present"
+        return False, f"Missing required env vars for inference: {', '.join(missing)}"
+    return True, "Inference env vars present (HF_TOKEN set)"
 
 
 def _check_docker_available() -> tuple[bool, str]:
