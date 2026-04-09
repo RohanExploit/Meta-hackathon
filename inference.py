@@ -472,12 +472,11 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
     print(f"\n{'=' * 60}")
     print(f"Running task: {task_name} (horizon={max_steps}, mode={'local' if use_local else 'remote'})")
     print(f"{'=' * 60}")
-    print("START", flush=True)  # Required structured log format
+    print(f"[START] task={task_name}", flush=True)
 
     for step in range(1, max_steps + 1):
         if done:
             print(f"Episode ended early at step {step}")
-            print("END", flush=True)  # Required structured log format
             break
 
         action = _call_model_action(client, task_name, step, observation, history)
@@ -522,13 +521,11 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
         final_info = info
 
         # Required structured log format: one STEP line per timestep
-        print(f"STEP {step}", flush=True)
+        print(f"[STEP] task={task_name} step={step} reward={reward:.6f}", flush=True)
 
         if step % 5 == 0 or done:
             cash = observation.get("cash", 0)
             print(f"  Step {step:2d}: action={action.get('action'):8s} | reward={reward:7.2f} | cash=${cash:8.2f}")
-
-    print("END", flush=True)  # Required structured log format
 
     grader = {}
     if isinstance(final_info, dict):
@@ -539,6 +536,7 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
             grader = terminal.get("grader", {})
 
     score = float(grader.get("score", 0.0))
+    print(f"[END] task={task_name} score={score:.6f} steps={len(history)}", flush=True)
 
     return {
         "task": task_name,
