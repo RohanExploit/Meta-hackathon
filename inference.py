@@ -461,30 +461,41 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
     print(f"{'=' * 60}")
     print(f"[START] task={task_name}", flush=True)
     
-    if use_local:
-        env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
-        obs_obj = env.reset(task_cfg)
-        observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
-        done = False
-        final_info: Dict[str, Any] = {}
-        total_reward = 0.0
-    else:
-        try:
-            reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
-            reset_out = _post_json("/reset", reset_payload)
-            observation = reset_out.get("observation", {})
-            done = bool(reset_out.get("done", False))
-            final_info = reset_out.get("info", {})
-            total_reward = 0.0
-        except (requests.exceptions.RequestException, ValueError) as e:
-            print(f"  Reset error ({type(e).__name__}: {e}). Falling back to local mode.", flush=True)
+    try:
+        if use_local:
             env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
             obs_obj = env.reset(task_cfg)
             observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
             done = False
-            final_info = {}
+            final_info: Dict[str, Any] = {}
             total_reward = 0.0
-            use_local = True
+        else:
+            try:
+                reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
+                reset_out = _post_json("/reset", reset_payload)
+                observation = reset_out.get("observation", {})
+                done = bool(reset_out.get("done", False))
+                final_info = reset_out.get("info", {})
+                total_reward = 0.0
+            except (requests.exceptions.RequestException, ValueError) as e:
+                print(f"  Reset error ({type(e).__name__}). Falling back to local mode.", flush=True)
+                env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
+                obs_obj = env.reset(task_cfg)
+                observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
+                done = False
+                final_info = {}
+                total_reward = 0.0
+                use_local = True
+    except Exception:
+        print(f"[END] task={task_name} score=0.000000 steps=0", flush=True)
+        return {
+            "task": task_name,
+            "total_reward": 0.0,
+            "steps_executed": 0,
+            "score": 0.0,
+            "grader": {},
+            "final_cash": 0,
+        }
 
     for step in range(1, max_steps + 1):
         if done:
