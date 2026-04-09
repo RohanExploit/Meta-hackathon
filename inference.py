@@ -450,6 +450,10 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return response.json()
 
 
+def _normalize_task_name(task_name: str) -> str:
+    return task_name.lower().replace("-", "_").replace(" ", "_")
+
+
 def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) -> Dict[str, Any]:
     """Run a single task and collect results."""
     task_cfg = TASKS[task_name]
@@ -478,7 +482,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
                 final_info = reset_out.get("info", {})
                 total_reward = 0.0
             except (requests.exceptions.RequestException, ValueError) as e:
-                print(f"  Reset error ({type(e).__name__}). Falling back to local mode.", flush=True)
+                print(f"  Reset error ({type(e).__name__}: {e}). Falling back to local mode.", flush=True)
                 env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
                 obs_obj = env.reset(task_cfg)
                 observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
@@ -486,7 +490,8 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
                 final_info = {}
                 total_reward = 0.0
                 use_local = True
-    except Exception:
+    except Exception as e:
+        print(f"  Task initialization failed ({type(e).__name__}: {e})", flush=True)
         print(f"[END] task={task_name} score=0.000000 steps=0", flush=True)
         return {
             "task": task_name,
@@ -597,7 +602,7 @@ async def async_main(args) -> None:
         print("HF_TOKEN not set; model calls will use rule-based heuristics instead of LLM.", flush=True)
 
     # Use specified tasks (supports comma-separated values and case-insensitive matching).
-    lookup = {k.lower(): k for k in TASKS}
+    lookup = {_normalize_task_name(k): k for k in TASKS}
     requested_tasks: List[str] = []
     for raw in (args.tasks or []):
         requested_tasks.extend(part.strip() for part in str(raw).split(",") if part.strip())
@@ -605,7 +610,7 @@ async def async_main(args) -> None:
     tasks_to_run: List[str] = []
     unknown_tasks: List[str] = []
     for task in requested_tasks:
-        key = task.lower().replace("-", "_").replace(" ", "_")
+        key = _normalize_task_name(task)
         if key in lookup:
             tasks_to_run.append(lookup[key])
         else:
