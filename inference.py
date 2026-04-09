@@ -477,7 +477,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
             final_info = reset_out.get("info", {})
             total_reward = 0.0
         except (requests.exceptions.RequestException, ValueError) as e:
-            print(f"  Reset error: {e}. Falling back to local mode.", flush=True)
+            print(f"  Reset error ({type(e).__name__}). Falling back to local mode.", flush=True)
             env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
             obs_obj = env.reset(task_cfg)
             observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
@@ -593,7 +593,7 @@ async def async_main(args) -> None:
 
     tasks_to_run: List[str] = []
     for task in requested_tasks:
-        key = task.lower().replace("-", "_")
+        key = task.lower().replace("-", "_").replace(" ", "_")
         if key in lookup:
             tasks_to_run.append(lookup[key])
 
