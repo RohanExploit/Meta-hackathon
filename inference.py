@@ -477,7 +477,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
             final_info = reset_out.get("info", {})
             total_reward = 0.0
         except (requests.exceptions.RequestException, ValueError) as e:
-            print(f"  Reset error ({type(e).__name__}). Falling back to local mode.", flush=True)
+            print(f"  Reset error ({type(e).__name__}: {e}). Falling back to local mode.", flush=True)
             env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
             obs_obj = env.reset(task_cfg)
             observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
@@ -583,7 +583,7 @@ async def async_main(args) -> None:
     if HF_TOKEN:
         client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     else:
-        print("HF_TOKEN not set; using heuristic fallback policy.", flush=True)
+        print("HF_TOKEN not set; model calls will use rule-based heuristics instead of LLM.", flush=True)
 
     # Use specified tasks (supports comma-separated values and case-insensitive matching).
     lookup = {k.lower(): k for k in TASKS}
@@ -592,10 +592,16 @@ async def async_main(args) -> None:
         requested_tasks.extend(part.strip() for part in str(raw).split(",") if part.strip())
 
     tasks_to_run: List[str] = []
+    unknown_tasks: List[str] = []
     for task in requested_tasks:
         key = task.lower().replace("-", "_").replace(" ", "_")
         if key in lookup:
             tasks_to_run.append(lookup[key])
+        else:
+            unknown_tasks.append(task)
+
+    if unknown_tasks:
+        print(f"Ignoring unknown tasks: {', '.join(unknown_tasks)}", flush=True)
 
     # If validator passes unknown task names, still run known tasks so structured output exists.
     if not tasks_to_run:
