@@ -457,7 +457,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
     history: List[str] = []
 
     print(f"\n{'=' * 60}")
-    print(f"Running task: {task_name} (horizon={max_steps}, mode={'local' if use_local else 'remote'})")
+    print(f"Running task: {task_name} (horizon={max_steps})")
     print(f"{'=' * 60}")
     print(f"[START] task={task_name}", flush=True)
     
@@ -476,7 +476,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
             done = bool(reset_out.get("done", False))
             final_info = reset_out.get("info", {})
             total_reward = 0.0
-        except Exception as e:
+        except (requests.exceptions.RequestException, ValueError) as e:
             print(f"  Reset error: {e}. Falling back to local mode.", flush=True)
             env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
             obs_obj = env.reset(task_cfg)
