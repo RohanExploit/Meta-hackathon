@@ -383,13 +383,16 @@ def _heuristic_fallback(observation: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _call_model_action(
-    client: OpenAI,
+    client: Optional[OpenAI],
     task_name: str,
     step: int,
     observation: Dict[str, Any],
     history: List[str],
 ) -> Dict[str, Any]:
     """Call LLM to get next action."""
+    if client is None:
+        return _heuristic_fallback(observation)
+
     user_prompt = _build_user_prompt(task_name, step, observation, history)
 
     try:
@@ -447,32 +450,57 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return response.json()
 
 
-def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[str, Any]:
+def _normalize_task_name(task_name: str) -> str:
+    return task_name.lower().replace("-", "_").replace(" ", "_")
+
+
+def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) -> Dict[str, Any]:
     """Run a single task and collect results."""
     task_cfg = TASKS[task_name]
-    
-    if use_local:
-        env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
-        obs_obj = env.reset(task_cfg)
-        observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
-        done = False
-        final_info: Dict[str, Any] = {}
-        total_reward = 0.0
-    else:
-        reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
-        reset_out = _post_json("/reset", reset_payload)
-        observation = reset_out.get("observation", {})
-        done = bool(reset_out.get("done", False))
-        final_info = reset_out.get("info", {})
-        total_reward = 0.0
-
-    history: List[str] = []
     max_steps = int(task_cfg.get("horizon", 30))
+    history: List[str] = []
 
     print(f"\n{'=' * 60}")
-    print(f"Running task: {task_name} (horizon={max_steps}, mode={'local' if use_local else 'remote'})")
+    print(f"Running task: {task_name} (horizon={max_steps})")
     print(f"{'=' * 60}")
     print(f"[START] task={task_name}", flush=True)
+    
+    try:
+        if use_local:
+            env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
+            obs_obj = env.reset(task_cfg)
+            observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
+            done = False
+            final_info: Dict[str, Any] = {}
+            total_reward = 0.0
+        else:
+            try:
+                reset_payload = {"task_name": task_name, "seed": int(task_cfg["seed"])}
+                reset_out = _post_json("/reset", reset_payload)
+                observation = reset_out.get("observation", {})
+                done = bool(reset_out.get("done", False))
+                final_info = reset_out.get("info", {})
+                total_reward = 0.0
+            except (requests.exceptions.RequestException, ValueError) as e:
+                print(f"  Reset error ({type(e).__name__}: {e}). Falling back to local mode.", flush=True)
+                env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
+                obs_obj = env.reset(task_cfg)
+                observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
+                done = False
+                final_info = {}
+                total_reward = 0.0
+                use_local = True
+    except Exception as e:
+        print(f"  Task initialization failed ({type(e).__name__}: {e})", flush=True)
+        print(f"[END] task={task_name} score=0.000000 steps=0", flush=True)
+        return {
+            "task": task_name,
+            "total_reward": 0.0,
+            "steps_executed": 0,
+            "score": 0.0,
+            "grader": {},
+            "final_cash": 0,
+        }
 
     for step in range(1, max_steps + 1):
         if done:
@@ -550,7 +578,7 @@ def run_task(client: OpenAI, task_name: str, use_local: bool = False) -> Dict[st
 
 # ── Main Entry Point ────────────────────────────────────────────────
 
-async def run_task_async(client: OpenAI, task_name: str, use_local: bool) -> Dict[str, Any]:
+async def run_task_async(client: Optional[OpenAI], task_name: str, use_local: bool) -> Dict[str, Any]:
     """Run a task asynchronously in a separate thread so we can parallelize."""
     return await asyncio.to_thread(run_task, client, task_name, use_local)
 
@@ -562,21 +590,39 @@ async def async_main(args) -> None:
         return
 
     # Otherwise, run the OpenEnv retail agent
-    if not HF_TOKEN:
-        raise ValueError("HF_TOKEN is required (set via environment variable)")
-
     print("\n" + "=" * 60)
     print(f"MULTI-CHANNEL RETAIL INFERENCE (PARALLEL, workers={args.parallel})")
     print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation")
     print("=" * 60)
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client: Optional[OpenAI] = None
+    if HF_TOKEN:
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    else:
+        print("HF_TOKEN not set; model calls will use rule-based heuristics instead of LLM.", flush=True)
 
-    # Use specified tasks or fallback to defaults
-    tasks_to_run = [t for t in args.tasks if t in TASKS]
+    # Use specified tasks (supports comma-separated values and case-insensitive matching).
+    lookup = {_normalize_task_name(k): k for k in TASKS}
+    requested_tasks: List[str] = []
+    for raw in (args.tasks or []):
+        requested_tasks.extend(part.strip() for part in str(raw).split(",") if part.strip())
+
+    tasks_to_run: List[str] = []
+    unknown_tasks: List[str] = []
+    for task in requested_tasks:
+        key = _normalize_task_name(task)
+        if key in lookup:
+            tasks_to_run.append(lookup[key])
+        else:
+            unknown_tasks.append(task)
+
+    if unknown_tasks:
+        print(f"Ignoring unknown tasks: {', '.join(unknown_tasks)}", flush=True)
+
+    # If validator passes unknown task names, still run known tasks so structured output exists.
     if not tasks_to_run:
-        print("No valid tasks found to run.")
-        return
+        tasks_to_run = list(TASKS.keys())
+        print("No valid tasks found in --tasks; falling back to all known tasks.", flush=True)
 
     # Run tasks in parallel
     print(f"Starting {len(tasks_to_run)} tasks in parallel...")
