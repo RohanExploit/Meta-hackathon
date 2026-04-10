@@ -674,7 +674,7 @@ def main() -> None:
     parser.add_argument("--task_name", dest="task_name_alias", action="append", default=[], help="Task alias for compatibility")
     parser.add_argument("--task-name", dest="task_name_alias", action="append", default=[], help="Task alias for compatibility")
     parser.add_argument("--task_list", dest="task_list_alias", nargs="+", action="append", default=[], help="Task list alias for compatibility")
-    parser.add_argument("--task-list", dest="task_list_alias", nargs="+", action="append", help="Task list alias for compatibility")
+    parser.add_argument("--task-list", dest="task_list_alias", nargs="+", action="append", default=[], help="Task list alias for compatibility")
     args, unknown = parser.parse_known_args()
 
     if unknown:
@@ -688,7 +688,7 @@ def main() -> None:
     for group in args.task_list_alias:
         merged_tasks.extend(group)
     args.tasks = merged_tasks or ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
-    args.parallel = max(1, int(args.parallel))
+    args.parallel = max(1, args.parallel)
 
     asyncio.run(async_main(args))
 
