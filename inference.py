@@ -548,12 +548,16 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
         history.append(f"Day {observation.get('day', 0)}: Chose {action_type} on {product} | Reward: {reward:.2f} | Stockouts: {sum(observation.get('recent_stockouts', {}).values())}")
         final_info = info
 
-        # Required structured log format: one STEP line per timestep
-        print(f"[STEP] task={task_name} step={step} reward={reward:.6f}", flush=True)
+        # Required structured log format: one STEP line per timestep.
+        # Keep this canonical format for validator compatibility.
+        print(f"[STEP] step={step} reward={reward:.6f}", flush=True)
 
         if step % 5 == 0 or done:
             cash = observation.get("cash", 0)
-            print(f"  Step {step:2d}: action={action.get('action'):8s} | reward={reward:7.2f} | cash=${cash:8.2f}")
+            print(
+                f"  Task={task_name} Step {step:2d}: action={action.get('action'):8s} | "
+                f"reward={reward:7.2f} | cash=${cash:8.2f}"
+            )
 
     grader = {}
     if isinstance(final_info, dict):
