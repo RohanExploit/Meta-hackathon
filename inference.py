@@ -548,8 +548,9 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
         history.append(f"Day {observation.get('day', 0)}: Chose {action_type} on {product} | Reward: {reward:.2f} | Stockouts: {sum(observation.get('recent_stockouts', {}).values())}")
         final_info = info
 
-        # Required structured log format: one STEP line per timestep
-        print(f"[STEP] task={task_name} step={step} reward={reward:.6f}", flush=True)
+        # Required structured log format: one STEP line per timestep.
+        # Keep this canonical format for validator compatibility.
+        print(f"[STEP] step={step} reward={reward:.6f}", flush=True)
 
         if step % 5 == 0 or done:
             cash = observation.get("cash", 0)
@@ -663,7 +664,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-Channel Retail Inference")
     parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
     parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
-    parser.add_argument("--parallel", type=int, default=5, help="Number of environments to evaluate concurrently")
+    parser.add_argument("--parallel", type=int, default=1, help="Number of environments to evaluate concurrently")
     parser.add_argument("--tasks", type=str, nargs="+", default=["easy", "medium_simple", "medium_challenge", "hard", "expert"], help="Tasks to run")
     args = parser.parse_args()
 
