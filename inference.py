@@ -668,12 +668,13 @@ def main() -> None:
     parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
     parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
     parser.add_argument("--parallel", type=int, default=1, help="Number of environments to evaluate concurrently")
+    # Use None so we can merge compatibility aliases first, then apply one fallback default.
     parser.add_argument("--tasks", type=str, nargs="+", default=None, help="Tasks to run")
     parser.add_argument("--task", dest="task_alias", action="append", default=[], help="Task alias (single task entry)")
     parser.add_argument("--task_name", dest="task_name_alias", action="append", default=[], help="Task alias for compatibility")
     parser.add_argument("--task-name", dest="task_name_alias", action="append", default=[], help="Task alias for compatibility")
-    parser.add_argument("--task_list", dest="task_list_alias", nargs="+", default=[], help="Task list alias for compatibility")
-    parser.add_argument("--task-list", dest="task_list_alias", nargs="+", default=[], help="Task list alias for compatibility")
+    parser.add_argument("--task_list", dest="task_list_alias", nargs="+", action="append", default=[], help="Task list alias for compatibility")
+    parser.add_argument("--task-list", dest="task_list_alias", nargs="+", action="append", help="Task list alias for compatibility")
     args, unknown = parser.parse_known_args()
 
     if unknown:
@@ -684,7 +685,8 @@ def main() -> None:
         merged_tasks.extend(args.tasks)
     merged_tasks.extend(args.task_alias)
     merged_tasks.extend(args.task_name_alias)
-    merged_tasks.extend(args.task_list_alias)
+    for group in args.task_list_alias:
+        merged_tasks.extend(group)
     args.tasks = merged_tasks or ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
     args.parallel = max(1, int(args.parallel))
 
