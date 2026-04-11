@@ -93,8 +93,11 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 # Defaults are set ONLY for API_BASE_URL and MODEL_NAME — NOT for HF_TOKEN
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
-# Accept either HF_TOKEN or the standard OPENAI_API_KEY variable
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
+# Accept either HF_TOKEN or the standard OPENAI_API_KEY variable.
+# Use explicit None checks so an empty string in one var doesn't mask the other.
+_hf = os.getenv("HF_TOKEN")
+_oai = os.getenv("OPENAI_API_KEY")
+HF_TOKEN = _hf if _hf else _oai
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # Optional: used with from_docker_image()
 
 TEMPERATURE = 0.0
