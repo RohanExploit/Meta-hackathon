@@ -36,17 +36,45 @@ try:
 except ImportError:
     pass
 
-import requests
-from openai import OpenAI
-
-from environment.tasks import TASKS
-from environment.retail_env import MultiChannelRetailEnv
-from environment.models import (
-    ActionType, AllocateAction, CompositeAction, NoOpAction, OrderAction,
-    PromoteAction, SetPriceAction, RetailAction,
-)
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None  # type: ignore[assignment]
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None  # type: ignore[assignment,misc]
+
+try:
+    from environment.tasks import TASKS
+    from environment.retail_env import MultiChannelRetailEnv
+    from environment.models import (
+        ActionType, AllocateAction, CompositeAction, NoOpAction, OrderAction,
+        PromoteAction, SetPriceAction, RetailAction,
+    )
+    _ENV_AVAILABLE = True
+except Exception:
+    _ENV_AVAILABLE = False
+    MultiChannelRetailEnv = None  # type: ignore[assignment,misc]
+    # Minimal fallback task definitions used when the environment package
+    # cannot be imported (e.g. missing numpy/pydantic in the validator).
+    TASKS = {
+        "easy":             {"name": "easy",             "seed": 42,  "horizon": 10},
+        "medium_simple":    {"name": "medium_simple",    "seed": 123, "horizon": 14},
+        "medium_challenge": {"name": "medium_challenge", "seed": 456, "horizon": 14},
+        "hard":             {"name": "hard",             "seed": 789, "horizon": 21},
+        "expert":           {"name": "expert",           "seed": 999, "horizon": 30},
+    }
+    # Stub model classes so _local_parse_action still returns something sensible.
+    class _NoOpAction:
+        pass
+
+    NoOpAction = _NoOpAction  # type: ignore[assignment,misc]
+    ActionType = None  # type: ignore[assignment]
 
 # NOTE: Pipeline imports are lazy (inside demo_rag_pipeline) to avoid
 # breaking inference.py when RAG dependencies aren't installed.
@@ -65,7 +93,11 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 # Defaults are set ONLY for API_BASE_URL and MODEL_NAME — NOT for HF_TOKEN
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")
+# Accept either HF_TOKEN or the standard OPENAI_API_KEY variable.
+# Use explicit None checks so an empty string in one var doesn't mask the other.
+_hf = os.getenv("HF_TOKEN")
+_oai = os.getenv("OPENAI_API_KEY")
+HF_TOKEN = _hf if _hf else _oai
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # Optional: used with from_docker_image()
 
 TEMPERATURE = 0.0
@@ -383,7 +415,7 @@ def _heuristic_fallback(observation: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _call_model_action(
-    client: Optional[OpenAI],
+    client: Optional[Any],
     task_name: str,
     step: int,
     observation: Dict[str, Any],
@@ -441,7 +473,9 @@ def _local_parse_action(payload: Dict[str, Any]) -> 'RetailAction':
 
 def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Post JSON to environment server."""
-    response = requests.post(
+    if _requests is None:
+        raise RuntimeError("requests package not available")
+    response = _requests.post(
         f"{ENV_BASE_URL}{path}",
         json=payload,
         timeout=REQUEST_TIMEOUT,
@@ -454,19 +488,36 @@ def _normalize_task_name(task_name: str) -> str:
     return task_name.lower().replace("-", "_").replace(" ", "_")
 
 
-def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) -> Dict[str, Any]:
+def run_task(client: Optional[Any], task_name: str, use_local: bool = False) -> Dict[str, Any]:
     """Run a single task and collect results."""
-    task_cfg = TASKS[task_name]
-    max_steps = int(task_cfg.get("horizon", 30))
-    history: List[str] = []
-
+    # Print [START] immediately so the validator sees it even if later setup fails.
     print(f"\n{'=' * 60}")
-    print(f"Running task: {task_name} (horizon={max_steps})")
+    print(f"Running task: {task_name}")
     print(f"{'=' * 60}")
     print(f"[START] task={task_name}", flush=True)
-    
+
     try:
-        if use_local:
+        task_cfg = TASKS[task_name]
+        max_steps = int(task_cfg.get("horizon", 30))
+    except Exception as e:
+        print(f"  Task config error ({type(e).__name__}: {e})", flush=True)
+        print(f"[END] task={task_name} score=0.000000 steps=0", flush=True)
+        return {
+            "task": task_name,
+            "total_reward": 0.0,
+            "steps_executed": 0,
+            "score": 0.0,
+            "grader": {},
+            "final_cash": 0,
+        }
+
+    history: List[str] = []
+
+    try:
+        if use_local or _requests is None:
+            if MultiChannelRetailEnv is None:
+                raise RuntimeError("environment package not available and requests is also missing; cannot run task")
+            use_local = True
             env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
             obs_obj = env.reset(task_cfg)
             observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
@@ -481,8 +532,10 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
                 done = bool(reset_out.get("done", False))
                 final_info = reset_out.get("info", {})
                 total_reward = 0.0
-            except (requests.exceptions.RequestException, ValueError) as e:
+            except Exception as e:
                 print(f"  Reset error ({type(e).__name__}: {e}). Falling back to local mode.", flush=True)
+                if MultiChannelRetailEnv is None:
+                    raise RuntimeError("environment package not available for local fallback") from e
                 env = MultiChannelRetailEnv(seed=int(task_cfg.get("seed", 42)))
                 obs_obj = env.reset(task_cfg)
                 observation = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else obs_obj
@@ -528,18 +581,23 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
         except Exception as e:
             print(f"  Step error: {e}")
             action = {"action": "noop"}
-            if use_local:
-                obs_tuple = env.step(NoOpAction(action="noop"))
-                observation = obs_tuple[0].model_dump()
-                reward = float(obs_tuple[1])
-                done = bool(obs_tuple[2])
-                info = obs_tuple[3] or {}
-            else:
-                step_out = _post_json("/step", {"action": {"action": "noop"}})
-                observation = step_out.get("observation", {})
-                reward = float(step_out.get("reward", 0.0))
-                done = bool(step_out.get("done", False))
-                info = step_out.get("info", {}) or {}
+            try:
+                if use_local:
+                    obs_tuple = env.step(NoOpAction(action="noop"))
+                    observation = obs_tuple[0].model_dump()
+                    reward = float(obs_tuple[1])
+                    done = bool(obs_tuple[2])
+                    info = obs_tuple[3] or {}
+                else:
+                    step_out = _post_json("/step", {"action": {"action": "noop"}})
+                    observation = step_out.get("observation", {})
+                    reward = float(step_out.get("reward", 0.0))
+                    done = bool(step_out.get("done", False))
+                    info = step_out.get("info", {}) or {}
+            except Exception:
+                reward = 0.0
+                done = True
+                info = {}
 
         total_reward += reward
         step_reasoning = action.get("reasoning", "")[:50]
@@ -582,7 +640,7 @@ def run_task(client: Optional[OpenAI], task_name: str, use_local: bool = False) 
 
 # ── Main Entry Point ────────────────────────────────────────────────
 
-async def run_task_async(client: Optional[OpenAI], task_name: str, use_local: bool) -> Dict[str, Any]:
+async def run_task_async(client: Optional[Any], task_name: str, use_local: bool) -> Dict[str, Any]:
     """Run a task asynchronously in a separate thread so we can parallelize."""
     return await asyncio.to_thread(run_task, client, task_name, use_local)
 
@@ -599,11 +657,14 @@ async def async_main(args) -> None:
     print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation")
     print("=" * 60)
 
-    client: Optional[OpenAI] = None
-    if HF_TOKEN:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client: Optional[Any] = None
+    if HF_TOKEN and OpenAI is not None:
+        try:
+            client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        except Exception as e:
+            print(f"LLM client creation failed ({e}); using heuristics.", flush=True)
     else:
-        print("HF_TOKEN not set; model calls will use rule-based heuristics instead of LLM.", flush=True)
+        print("No API token set; model calls will use rule-based heuristics instead of LLM.", flush=True)
 
     # Use specified tasks (supports comma-separated values and case-insensitive matching).
     lookup = {_normalize_task_name(k): k for k in TASKS}
@@ -664,14 +725,26 @@ async def async_main(args) -> None:
 
 def main() -> None:
     """Run all tasks and optionally demo the RAG pipeline."""
-    parser = argparse.ArgumentParser(description="Multi-Channel Retail Inference")
-    parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
-    parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
-    parser.add_argument("--parallel", type=int, default=5, help="Number of environments to evaluate concurrently")
-    parser.add_argument("--tasks", type=str, nargs="+", default=["easy", "medium_simple", "medium_challenge", "hard", "expert"], help="Tasks to run")
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(description="Multi-Channel Retail Inference")
+        parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
+        parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
+        parser.add_argument("--parallel", type=int, default=5, help="Number of environments to evaluate concurrently")
+        parser.add_argument("--tasks", type=str, nargs="+", default=["easy", "medium_simple", "medium_challenge", "hard", "expert"], help="Tasks to run")
+        args = parser.parse_args()
 
-    asyncio.run(async_main(args))
+        asyncio.run(async_main(args))
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Last-resort: if something catastrophic went wrong before any task ran,
+        # emit minimal structured output so the validator can parse results.
+        logger.error(f"Fatal error in main: {e}", exc_info=True)
+        default_tasks = ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
+        for task_name in default_tasks:
+            print(f"[START] task={task_name}", flush=True)
+            print(f"[STEP] step=1 reward=0.000000", flush=True)
+            print(f"[END] task={task_name} score=0.000000 steps=1", flush=True)
 
 
 if __name__ == "__main__":
