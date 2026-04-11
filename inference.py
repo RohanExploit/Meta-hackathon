@@ -640,22 +640,21 @@ def run_task(client: Optional[Any], task_name: str, use_local: bool = False) -> 
 
 # ── Main Entry Point ────────────────────────────────────────────────
 
-async def run_task_async(client: Optional[Any], task_name: str, use_local: bool) -> Dict[str, Any]:
-    """Run a task asynchronously in a separate thread so we can parallelize."""
-    return await asyncio.to_thread(run_task, client, task_name, use_local)
+def sync_main(args) -> None:
+    """Run tasks SEQUENTIALLY so [START]/[STEP]/[END] blocks are never
+    interleaved. The validator parses stdout line-by-line and requires
+    each task's structured output to be contiguous."""
 
-
-async def async_main(args) -> None:
     # Check if we should demo the RAG pipeline
     if args.rag_demo:
-        await demo_rag_pipeline()
+        asyncio.run(demo_rag_pipeline())
         return
 
     # Otherwise, run the OpenEnv retail agent
-    print("\n" + "=" * 60)
-    print(f"MULTI-CHANNEL RETAIL INFERENCE (PARALLEL, workers={args.parallel})")
-    print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation")
-    print("=" * 60)
+    print("\n" + "=" * 60, flush=True)
+    print("MULTI-CHANNEL RETAIL INFERENCE (SEQUENTIAL)", flush=True)
+    print("Pipeline: Safety -> Router -> Retrieval -> Reranking -> Generation", flush=True)
+    print("=" * 60, flush=True)
 
     client: Optional[Any] = None
     if HF_TOKEN and OpenAI is not None:
@@ -689,58 +688,59 @@ async def async_main(args) -> None:
         tasks_to_run = list(TASKS.keys())
         print("No valid tasks found in --tasks; falling back to all known tasks.", flush=True)
 
-    # Run tasks in parallel
-    print(f"Starting {len(tasks_to_run)} tasks in parallel...")
-    
-    # We can use asyncio.gather with the specified concurrency limit
-    semaphore = asyncio.Semaphore(args.parallel)
-    
-    async def _sem_run(task_name):
-        async with semaphore:
-            return await run_task_async(client, task_name, args.local)
-
-    coroutines = [_sem_run(task_name) for task_name in tasks_to_run]
-    results_raw = await asyncio.gather(*coroutines, return_exceptions=True)
+    # Run tasks SEQUENTIALLY — critical for validator parsing
+    print(f"Running {len(tasks_to_run)} tasks sequentially...", flush=True)
 
     results: List[Dict[str, Any]] = []
-    
-    # Process results sequentially to keep summary clean
-    for idx, result in enumerate(results_raw):
-        task_name = tasks_to_run[idx]
-        if isinstance(result, Exception):
-            print(f"\n  [FAIL] {task_name:20s} failed: {result}")
-        else:
+
+    for task_name in tasks_to_run:
+        try:
+            result = run_task(client, task_name, args.local)
             results.append(result)
-            print(f"\n  [OK] {task_name:20s} score={result['score']:.4f} reward={result['total_reward']:8.2f}")
+            print(f"  [OK] {task_name:20s} score={result['score']:.4f} reward={result['total_reward']:8.2f}", flush=True)
+        except Exception as exc:
+            print(f"  [FAIL] {task_name:20s} failed: {exc}", flush=True)
+            # Emit structured output so validator sees something
+            print(f"[START] task={task_name}", flush=True)
+            print(f"[STEP] step=1 reward=0.000000", flush=True)
+            print(f"[END] task={task_name} score=0.000000 steps=1", flush=True)
 
     if results:
         mean_score = sum(r["score"] for r in results) / len(results)
-        print("\n" + "=" * 60)
-        print(f"SUMMARY: Mean score = {mean_score:.4f} ({len(results)} tasks)")
-        print("=" * 60)
-        print(json.dumps({"results": results, "mean_score": mean_score}, indent=2))
+        print("\n" + "=" * 60, flush=True)
+        print(f"SUMMARY: Mean score = {mean_score:.4f} ({len(results)} tasks)", flush=True)
+        print("=" * 60, flush=True)
+        print(json.dumps({"results": results, "mean_score": mean_score}, indent=2), flush=True)
     else:
-        print("\nNo tasks completed successfully.")
+        print("\nNo tasks completed successfully.", flush=True)
 
 
 def main() -> None:
     """Run all tasks and optionally demo the RAG pipeline."""
+    default_tasks = ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
     try:
         parser = argparse.ArgumentParser(description="Multi-Channel Retail Inference")
         parser.add_argument("--rag-demo", action="store_true", help="Demo the RAG pipeline")
         parser.add_argument("--local", action="store_true", help="Evaluate locally (in-process) instead of HTTP calls to the environment server")
-        parser.add_argument("--parallel", type=int, default=5, help="Number of environments to evaluate concurrently")
-        parser.add_argument("--tasks", type=str, nargs="+", default=["easy", "medium_simple", "medium_challenge", "hard", "expert"], help="Tasks to run")
-        args = parser.parse_args()
+        parser.add_argument("--tasks", type=str, nargs="+", default=default_tasks, help="Tasks to run")
+        args, _unknown = parser.parse_known_args()
 
-        asyncio.run(async_main(args))
-    except SystemExit:
-        raise
+        sync_main(args)
+    except SystemExit as se:
+        # argparse calls sys.exit on --help or on bad args. For --help (code 0)
+        # just re-raise. For errors, emit structured fallback so the validator
+        # always sees parseable output.
+        if se.code == 0:
+            raise
+        logger.error(f"argparse/SystemExit (code={se.code})", exc_info=True)
+        for task_name in default_tasks:
+            print(f"[START] task={task_name}", flush=True)
+            print(f"[STEP] step=1 reward=0.000000", flush=True)
+            print(f"[END] task={task_name} score=0.000000 steps=1", flush=True)
     except Exception as e:
         # Last-resort: if something catastrophic went wrong before any task ran,
         # emit minimal structured output so the validator can parse results.
         logger.error(f"Fatal error in main: {e}", exc_info=True)
-        default_tasks = ["easy", "medium_simple", "medium_challenge", "hard", "expert"]
         for task_name in default_tasks:
             print(f"[START] task={task_name}", flush=True)
             print(f"[STEP] step=1 reward=0.000000", flush=True)
